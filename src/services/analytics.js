@@ -7,9 +7,9 @@
 // IMPORTANT: We NEVER send file names, file contents, or anything that
 // could identify a user. Only coarse, anonymous, bucketed counters.
 
-// Replace with the real Cloudflare Web Analytics token before going live.
-// While this is the placeholder, the beacon is NOT injected.
-const CF_BEACON_TOKEN = 'REPLACE_ME'
+// Cloudflare Web Analytics beacon token for pdf.patroventure.com.
+// This is a public, client-exposed token by design (not a secret).
+const CF_BEACON_TOKEN = '907fd415727248609669e4bd1a944511'
 
 const isDev = import.meta.env.DEV
 const isPlaceholderToken = CF_BEACON_TOKEN === 'REPLACE_ME'
