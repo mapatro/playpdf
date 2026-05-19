@@ -51,8 +51,8 @@ export default function FileUpload({ files, onAddFiles, onRemoveFile }) {
         onDrop={onDrop}
         className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
           dragActive
-            ? 'border-slate-900 bg-slate-50'
-            : 'border-slate-300 bg-white hover:border-slate-400'
+            ? 'border-orange-500 bg-orange-50'
+            : 'border-slate-300 bg-white hover:border-orange-400'
         }`}
       >
         <svg

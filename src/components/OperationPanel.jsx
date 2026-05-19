@@ -59,8 +59,8 @@ export default function OperationPanel({
               disabled={busy}
               className={`rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                 isActive
-                  ? 'bg-slate-900 text-white hover:bg-slate-700'
-                  : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-400'
+                  ? 'bg-orange-600 text-white hover:bg-orange-700'
+                  : 'border border-orange-200 bg-white text-slate-700 hover:border-orange-400'
               }`}
             >
               {op.label}
@@ -75,7 +75,7 @@ export default function OperationPanel({
             type="button"
             onClick={onMerge}
             disabled={!canMerge}
-            className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+            className="rounded-lg bg-orange-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
           >
             {busy ? 'Merging…' : 'Merge all files'}
           </button>
@@ -227,7 +227,7 @@ function SplitPanel({ file, busy, onSplitRange, onSplitAll }) {
           type="button"
           disabled={busy}
           onClick={() => onSplitRange(file, from, to)}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
         >
           {busy ? 'Working…' : 'Extract range'}
         </button>
@@ -330,7 +330,7 @@ function RotatePanel({ file, busy, onRotate }) {
           type="button"
           disabled={busy || !anyRotation}
           onClick={apply}
-          className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
         >
           {busy ? 'Working…' : 'Apply & Download'}
         </button>
@@ -407,7 +407,7 @@ function ReorderPanel({ file, busy, onReorder }) {
           type="button"
           disabled={busy || !changed}
           onClick={() => onReorder(file, order)}
-          className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+          className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
         >
           {busy ? 'Working…' : 'Apply & Download'}
         </button>
@@ -440,7 +440,7 @@ function ReorderPanel({ file, busy, onReorder }) {
               onDrop={() => onDrop(slot)}
               className={`flex cursor-move flex-col items-center rounded border bg-slate-50 p-2 ${
                 dragIndex === slot
-                  ? 'border-slate-900'
+                  ? 'border-orange-500'
                   : 'border-slate-200'
               }`}
             >
