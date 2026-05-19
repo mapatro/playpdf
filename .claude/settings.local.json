@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "PowerShell(npm *)",
+      "PowerShell($b = [System.IO.File]::ReadAllBytes\\(\"C:\\\\Projects\\\\playpdf\\\\public\\\\CNAME\"\\); \"$\\($b.Length\\) bytes\"; \\($b | ForEach-Object { $_ }\\) -join ',')",
+      "PowerShell(npm run *)"
+    ]
+  }
+}
