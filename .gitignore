@@ -26,6 +26,9 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 
+# Local harness config
+.claude/settings.local.json
+
 # OS junk
 .DS_Store
 Thumbs.db
