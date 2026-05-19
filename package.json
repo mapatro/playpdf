@@ -8,9 +8,14 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:merge": "node scripts/test-merge.mjs"
+    "test:merge": "node scripts/test-merge.mjs",
+    "test:split": "node scripts/test-split.mjs",
+    "test:rotate": "node scripts/test-rotate.mjs",
+    "test:reorder": "node scripts/test-reorder.mjs",
+    "test": "node scripts/test-merge.mjs && node scripts/test-split.mjs && node scripts/test-rotate.mjs && node scripts/test-reorder.mjs"
   },
   "dependencies": {
+    "jszip": "^3.10.1",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.3.1",
