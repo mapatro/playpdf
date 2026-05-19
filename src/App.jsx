@@ -3,6 +3,7 @@ import FileUpload from './components/FileUpload.jsx'
 import PagePreview from './components/PagePreview.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 import PrivacyFooter from './components/PrivacyFooter.jsx'
+import InfoSections from './components/InfoSections.jsx'
 import {
   mergePdfs,
   splitPdfRange,
@@ -228,6 +229,8 @@ export default function App() {
           message={message}
           error={error}
         />
+
+        <InfoSections />
       </main>
 
       <PrivacyFooter />

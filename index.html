@@ -46,6 +46,63 @@
         "publisher": { "@type": "Organization", "name": "PatroVenture", "url": "https://patroventure.com/" }
       }
     </script>
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "Are my PDF files uploaded to a server?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "No. Every operation runs entirely in your browser using JavaScript. Your files never leave your device and are never sent to us or anyone else."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is playPDF free?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes, completely free. There is no sign-up, no account, no watermark on output files, and no page or size limits beyond what your browser can handle."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I split or merge a PDF without uploading it?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes — that is the whole point of playPDF. Splitting, merging, rotating and reordering all happen locally in your browser, so it works even on confidential documents."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does it work offline?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "After the page has loaded once, the processing itself does not need a network connection — it all happens on your device."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is there a file size limit?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "There is no fixed limit. Because everything is processed in your browser, very large files are bounded only by your device's available memory."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "What happens to my files after I close the tab?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Nothing is stored. Files are held in memory only while the tab is open and are gone the moment you close or refresh it."
+            }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
