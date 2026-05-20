@@ -54,3 +54,47 @@ export async function renderThumbnails(data, opts = {}) {
   await pdf.destroy()
   return { pageCount, thumbnails }
 }
+
+/**
+ * Render every page of a PDF to a JPEG Blob.
+ *
+ * @param {ArrayBuffer|Uint8Array} data
+ * @param {{ scale?: number, quality?: number }} [opts]
+ *   scale: render multiplier (default 1.5, ~108 DPI). quality: JPEG quality 0..1 (default 0.85).
+ * @returns {Promise<Array<{ name: string, blob: Blob }>>}
+ */
+export async function renderPagesAsJpeg(data, opts = {}) {
+  const { scale = 1.5, quality = 0.85 } = opts
+  const bytes =
+    data instanceof Uint8Array ? data.slice() : new Uint8Array(data).slice()
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise
+  const pageCount = pdf.numPages
+  const pad = String(pageCount).length
+  const out = []
+
+  for (let i = 1; i <= pageCount; i++) {
+    const page = await pdf.getPage(i)
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    canvas.width = Math.ceil(viewport.width)
+    canvas.height = Math.ceil(viewport.height)
+    // Paint a white background — JPEG has no alpha and would otherwise
+    // serialize transparent pixels as black.
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    await page.render({ canvasContext: context, viewport }).promise
+    const blob = await new Promise((resolve, reject) =>
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Canvas blob failed'))),
+        'image/jpeg',
+        quality,
+      ),
+    )
+    out.push({ name: `page-${String(i).padStart(pad, '0')}.jpg`, blob })
+    page.cleanup()
+  }
+
+  await pdf.destroy()
+  return out
+}

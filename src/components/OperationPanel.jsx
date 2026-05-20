@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { renderThumbnails } from '../services/pdfRenderService.js'
 
 const OPERATIONS = [
@@ -7,6 +7,8 @@ const OPERATIONS = [
   { id: 'rotate', label: 'Rotate' },
   { id: 'reorder', label: 'Reorder' },
   { id: 'delete', label: 'Delete' },
+  { id: 'jpg-to-pdf', label: 'Images → PDF' },
+  { id: 'pdf-to-jpg', label: 'PDF → JPG' },
 ]
 
 /**
@@ -25,6 +27,8 @@ export default function OperationPanel({
   onRotate,
   onReorder,
   onDelete,
+  onImagesToPdf,
+  onPdfToJpg,
   message,
   error,
 }) {
@@ -92,7 +96,8 @@ export default function OperationPanel({
       {(activeOp === 'split' ||
         activeOp === 'rotate' ||
         activeOp === 'reorder' ||
-        activeOp === 'delete') && (
+        activeOp === 'delete' ||
+        activeOp === 'pdf-to-jpg') && (
         <SingleFileOps
           op={activeOp}
           readyFiles={readyFiles}
@@ -105,7 +110,12 @@ export default function OperationPanel({
           onRotate={onRotate}
           onReorder={onReorder}
           onDelete={onDelete}
+          onPdfToJpg={onPdfToJpg}
         />
+      )}
+
+      {activeOp === 'jpg-to-pdf' && (
+        <ImagesToPdfPanel busy={busy} onImagesToPdf={onImagesToPdf} />
       )}
 
       {message && (
@@ -130,6 +140,7 @@ function SingleFileOps({
   onRotate,
   onReorder,
   onDelete,
+  onPdfToJpg,
 }) {
   if (readyFiles.length === 0) {
     return (
@@ -189,6 +200,204 @@ function SingleFileOps({
           busy={busy}
           onDelete={onDelete}
         />
+      )}
+      {selectedFile && op === 'pdf-to-jpg' && (
+        <PdfToJpgPanel
+          key={selectedFile.id}
+          file={selectedFile}
+          busy={busy}
+          onPdfToJpg={onPdfToJpg}
+        />
+      )}
+    </div>
+  )
+}
+
+function PdfToJpgPanel({ file, busy, onPdfToJpg }) {
+  return (
+    <div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Renders each of the PDF's {file.pageCount} page
+        {file.pageCount === 1 ? '' : 's'} as a JPG and bundles them into a
+        single <code>.zip</code> for download. Higher-resolution rendering
+        means slightly larger files.
+      </p>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onPdfToJpg(file)}
+        className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+      >
+        {busy ? 'Working…' : `Export ${file.pageCount} page${file.pageCount === 1 ? '' : 's'} as JPG (.zip)`}
+      </button>
+    </div>
+  )
+}
+
+function ImagesToPdfPanel({ busy, onImagesToPdf }) {
+  const [images, setImages] = useState([]) // [{ id, file, url }]
+  const inputRef = useRef(null)
+
+  const isImage = (f) =>
+    f.type === 'image/jpeg' ||
+    f.type === 'image/png' ||
+    /\.(jpe?g|png)$/i.test(f.name)
+
+  const addFiles = (list) => {
+    const incoming = Array.from(list).filter(isImage)
+    if (!incoming.length) return
+    setImages((prev) => [
+      ...prev,
+      ...incoming.map((file) => ({
+        id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        url: URL.createObjectURL(file),
+      })),
+    ])
+  }
+
+  const removeOne = (id) =>
+    setImages((prev) => {
+      const found = prev.find((x) => x.id === id)
+      if (found) URL.revokeObjectURL(found.url)
+      return prev.filter((x) => x.id !== id)
+    })
+
+  const moveLeft = (idx) =>
+    setImages((prev) => {
+      if (idx <= 0) return prev
+      const next = [...prev]
+      ;[next[idx - 1], next[idx]] = [next[idx], next[idx - 1]]
+      return next
+    })
+
+  const moveRight = (idx) =>
+    setImages((prev) => {
+      if (idx >= prev.length - 1) return prev
+      const next = [...prev]
+      ;[next[idx + 1], next[idx]] = [next[idx], next[idx + 1]]
+      return next
+    })
+
+  const clearAll = () => {
+    images.forEach((x) => URL.revokeObjectURL(x.url))
+    setImages([])
+  }
+
+  const buildPdf = () => onImagesToPdf(images.map((x) => x.file))
+
+  return (
+    <div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Combine JPG and PNG images into a single PDF, one image per page.
+        Use the arrows to reorder before exporting.
+      </p>
+
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault()
+          addFiles(e.dataTransfer.files)
+        }}
+        className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-6 py-8 text-center transition-colors hover:border-orange-400"
+      >
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
+          Drag &amp; drop JPG/PNG images here, or click to choose
+        </p>
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+          JPG and PNG only · processed entirely in your browser
+        </p>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            addFiles(e.target.files)
+            e.target.value = ''
+          }}
+        />
+      </div>
+
+      {images.length > 0 && (
+        <>
+          <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-5">
+            {images.map((img, idx) => (
+              <figure
+                key={img.id}
+                className="flex flex-col items-center rounded border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800 p-2"
+              >
+                <div className="flex h-28 w-full items-center justify-center overflow-hidden">
+                  <img
+                    src={img.url}
+                    alt={img.file.name}
+                    className="max-h-28 w-auto object-contain shadow-sm"
+                  />
+                </div>
+                <figcaption className="mt-1 w-full truncate text-center text-[10px] text-slate-500 dark:text-slate-400">
+                  p{idx + 1} · {img.file.name}
+                </figcaption>
+                <div className="mt-1 flex gap-1">
+                  <button
+                    type="button"
+                    disabled={busy || idx === 0}
+                    onClick={() => moveLeft(idx)}
+                    className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40"
+                    aria-label="Move left"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy || idx === images.length - 1}
+                    onClick={() => moveRight(idx)}
+                    className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40"
+                    aria-label="Move right"
+                  >
+                    ▶
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => removeOne(img.id)}
+                    className="rounded bg-slate-200 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-medium text-red-600 dark:text-red-400 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40"
+                    aria-label="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </figure>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy || images.length === 0}
+              onClick={buildPdf}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+            >
+              {busy
+                ? 'Working…'
+                : `Build PDF from ${images.length} image${images.length === 1 ? '' : 's'}`}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={clearAll}
+              className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
+            >
+              Clear all
+            </button>
+          </div>
+        </>
       )}
     </div>
   )

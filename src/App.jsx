@@ -11,10 +11,15 @@ import {
   rotatePdf,
   reorderPages,
   deletePages,
+  imagesToPdf,
   downloadBlob,
 } from './services/pdfService.js'
-import { renderThumbnails } from './services/pdfRenderService.js'
+import {
+  renderThumbnails,
+  renderPagesAsJpeg,
+} from './services/pdfRenderService.js'
 import { track, bytesBucket } from './services/analytics.js'
+import JSZip from 'jszip'
 
 let idCounter = 0
 const nextId = () => `f${++idCounter}`
@@ -196,6 +201,37 @@ export default function App() {
     [runSingle],
   )
 
+  const handleImagesToPdf = useCallback(
+    (images) =>
+      runSingle(async () => {
+        const bytes = await imagesToPdf(images)
+        const name = 'images.pdf'
+        downloadBlob(bytes, name)
+        track('imagesToPdf', { count: images.length })
+        setMessage(
+          `Built a PDF from ${images.length} image${images.length === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
+  const handlePdfToJpg = useCallback(
+    (file) =>
+      runSingle(async () => {
+        const pages = await renderPagesAsJpeg(file.buffer ?? file.file)
+        const zip = new JSZip()
+        for (const { name, blob } of pages) zip.file(name, blob)
+        const zipBlob = await zip.generateAsync({ type: 'blob' })
+        const name = `${baseName(file.file.name)}-pages.zip`
+        downloadBlob(zipBlob, name)
+        track('pdfToJpg', { pageCount: file.pageCount })
+        setMessage(
+          `Exported ${pages.length} pages as JPGs. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
   return (
     <div className="flex min-h-full flex-col bg-orange-50/40 dark:bg-slate-950">
       <header className="sticky top-0 z-50 border-b border-orange-100 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
@@ -226,13 +262,18 @@ export default function App() {
           </p>
         </header>
 
-        <FileUpload
-          files={files}
-          onAddFiles={addFiles}
-          onRemoveFile={removeFile}
-        />
-
-        <PagePreview files={files} />
+        {/* Hide the PDF-input UI when the active op brings its own input
+            (e.g. Images → PDF accepts image files via its own picker). */}
+        {activeOp !== 'jpg-to-pdf' && (
+          <>
+            <FileUpload
+              files={files}
+              onAddFiles={addFiles}
+              onRemoveFile={removeFile}
+            />
+            <PagePreview files={files} />
+          </>
+        )}
 
         <OperationPanel
           files={files}
@@ -245,6 +286,8 @@ export default function App() {
           onRotate={handleRotate}
           onReorder={handleReorder}
           onDelete={handleDelete}
+          onImagesToPdf={handleImagesToPdf}
+          onPdfToJpg={handlePdfToJpg}
           message={message}
           error={error}
         />

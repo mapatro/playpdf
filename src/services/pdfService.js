@@ -228,6 +228,56 @@ export async function deletePages(input, indicesToRemove) {
 }
 
 /**
+ * Build a new PDF from an ordered list of images (JPG / PNG). Each image
+ * becomes its own page sized to the image's natural dimensions.
+ *
+ * @param {Array<Blob|File|ArrayBuffer|Uint8Array>} images
+ * @returns {Promise<Uint8Array>} the PDF bytes
+ */
+export async function imagesToPdf(images) {
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new Error('imagesToPdf requires at least one image.')
+  }
+  const doc = await PDFDocument.create()
+  for (const img of images) {
+    const bytes = await toUint8Array(img)
+    const kind = detectImageType(bytes)
+    let embedded
+    if (kind === 'jpeg') embedded = await doc.embedJpg(bytes)
+    else if (kind === 'png') embedded = await doc.embedPng(bytes)
+    else
+      throw new Error(
+        'Unsupported image type. Only JPG and PNG are supported.',
+      )
+    const page = doc.addPage([embedded.width, embedded.height])
+    page.drawImage(embedded, {
+      x: 0,
+      y: 0,
+      width: embedded.width,
+      height: embedded.height,
+    })
+  }
+  return doc.save()
+}
+
+/** Sniff JPEG / PNG by magic bytes. Returns 'jpeg' | 'png' | 'unknown'. */
+function detectImageType(bytes) {
+  if (bytes.length < 8) return 'unknown'
+  // JPEG: starts FF D8 FF
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff)
+    return 'jpeg'
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  )
+    return 'png'
+  return 'unknown'
+}
+
+/**
  * Trigger a browser download of bytes as a file. Uses an object URL that
  * is revoked afterwards. Nothing is uploaded.
  * @param {Uint8Array|Blob} data
