@@ -183,6 +183,9 @@ function SingleFileOps({
 
 function SplitPanel({ file, busy, onSplitRange, onSplitAll }) {
   const pageCount = file.pageCount || 1
+  // Mutually exclusive modes so the user can never accidentally trigger
+  // 'split every page' while trying to extract a range.
+  const [mode, setMode] = useState('range')
   const [from, setFrom] = useState(1)
   const [to, setTo] = useState(pageCount)
 
@@ -192,57 +195,122 @@ function SplitPanel({ file, busy, onSplitRange, onSplitAll }) {
     return Math.min(Math.max(n, 1), pageCount)
   }
 
+  const validRange =
+    Number.isInteger(from) &&
+    Number.isInteger(to) &&
+    from >= 1 &&
+    to <= pageCount &&
+    from <= to
+
   return (
     <div>
       <p className="mb-3 text-xs text-slate-500">
         This PDF has {pageCount} page{pageCount === 1 ? '' : 's'}.
       </p>
 
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs font-medium text-slate-600">
-          From
-          <input
-            type="number"
-            min={1}
-            max={pageCount}
-            value={from}
-            disabled={busy}
-            onChange={(e) => setFrom(clamp(e.target.value))}
-            className="mt-1 block w-20 rounded border border-slate-300 px-2 py-1 text-sm"
-          />
-        </label>
-        <label className="text-xs font-medium text-slate-600">
-          To
-          <input
-            type="number"
-            min={1}
-            max={pageCount}
-            value={to}
-            disabled={busy}
-            onChange={(e) => setTo(clamp(e.target.value))}
-            className="mt-1 block w-20 rounded border border-slate-300 px-2 py-1 text-sm"
-          />
-        </label>
+      {/* Segmented mode toggle — only one action is offered at a time. */}
+      <div
+        role="radiogroup"
+        aria-label="Split mode"
+        className="mb-4 inline-flex rounded-lg border border-orange-200 bg-white p-1"
+      >
         <button
           type="button"
+          role="radio"
+          aria-checked={mode === 'range'}
           disabled={busy}
-          onClick={() => onSplitRange(file, from, to)}
-          className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+          onClick={() => setMode('range')}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            mode === 'range'
+              ? 'bg-orange-600 text-white'
+              : 'text-slate-600 hover:text-orange-600'
+          }`}
         >
-          {busy ? 'Working…' : 'Extract range'}
+          Extract a page range
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={mode === 'all'}
+          disabled={busy}
+          onClick={() => setMode('all')}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            mode === 'all'
+              ? 'bg-orange-600 text-white'
+              : 'text-slate-600 hover:text-orange-600'
+          }`}
+        >
+          Split every page into separate files
         </button>
       </div>
 
-      <div className="mt-4 border-t border-slate-100 pt-4">
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => onSplitAll(file)}
-          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          Split every page (.zip)
-        </button>
-      </div>
+      {mode === 'range' && (
+        <div>
+          <p className="mb-3 text-xs text-slate-500">
+            Extract pages <strong>From – To</strong> (inclusive) into one new PDF.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-xs font-medium text-slate-600">
+              From
+              <input
+                type="number"
+                min={1}
+                max={pageCount}
+                value={from}
+                disabled={busy}
+                onChange={(e) => setFrom(clamp(e.target.value))}
+                className="mt-1 block w-20 rounded border border-slate-300 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="text-xs font-medium text-slate-600">
+              To
+              <input
+                type="number"
+                min={1}
+                max={pageCount}
+                value={to}
+                disabled={busy}
+                onChange={(e) => setTo(clamp(e.target.value))}
+                className="mt-1 block w-20 rounded border border-slate-300 px-2 py-1 text-sm"
+              />
+            </label>
+            <button
+              type="button"
+              disabled={busy || !validRange}
+              onClick={() => onSplitRange(file, from, to)}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+            >
+              {busy ? 'Working…' : `Extract pages ${from}–${to}`}
+            </button>
+          </div>
+          {!validRange && (
+            <p className="mt-2 text-xs text-red-500">
+              Range must satisfy 1 ≤ From ≤ To ≤ {pageCount}.
+            </p>
+          )}
+        </div>
+      )}
+
+      {mode === 'all' && (
+        <div>
+          <p className="mb-3 text-xs text-slate-500">
+            Splits every page into its own single-page PDF and bundles them
+            into a <code>.zip</code>. This <strong>ignores</strong> any
+            range — use “Extract a page range” instead if you only want some
+            pages.
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onSplitAll(file)}
+            className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+          >
+            {busy
+              ? 'Working…'
+              : `Split all ${pageCount} page${pageCount === 1 ? '' : 's'} (.zip)`}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
