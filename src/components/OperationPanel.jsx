@@ -1,29 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { renderThumbnails } from '../services/pdfRenderService.js'
-
-const OPERATIONS = [
-  { id: 'merge', label: 'Merge' },
-  { id: 'split', label: 'Split' },
-  { id: 'rotate', label: 'Rotate' },
-  { id: 'reorder', label: 'Reorder' },
-  { id: 'delete', label: 'Delete' },
-  { id: 'sign', label: 'Sign & Fill' },
-  { id: 'fill-form', label: 'Fill Form' },
-  { id: 'redact', label: 'Redact' },
-  { id: 'jpg-to-pdf', label: 'Images → PDF' },
-  { id: 'pdf-to-jpg', label: 'PDF → JPG' },
-]
+import { ActiveOpHeading } from './Sidebar.jsx'
 
 /**
- * Operations panel. Merge keeps its multi-file behaviour. Split / Rotate /
- * Reorder operate on a SINGLE selected file (chosen via a dropdown when
- * more than one PDF is loaded). Everything runs 100% client-side.
+ * Workspace panel for the currently active operation. The tool selector
+ * itself lives in the sidebar; here we just render the matching panel
+ * for activeOp, along with the message/error from the last run.
  */
 export default function OperationPanel({
   files,
   busy,
   activeOp,
-  onSelectOp,
   onMerge,
   onSplitRange,
   onSplitAll,
@@ -59,31 +46,13 @@ export default function OperationPanel({
   const selectedFile = readyFiles.find((f) => f.id === selectedId) || null
 
   return (
-    <section className="mt-8">
-      <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-300">Operations</h2>
-      <div className="flex flex-wrap gap-3">
-        {OPERATIONS.map((op) => {
-          const isActive = activeOp === op.id
-          return (
-            <button
-              key={op.id}
-              type="button"
-              onClick={() => onSelectOp(op.id)}
-              disabled={busy}
-              className={`rounded-lg px-5 py-2.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                isActive
-                  ? 'bg-orange-600 text-white hover:bg-orange-700'
-                  : 'border border-orange-200 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:border-orange-400'
-              }`}
-            >
-              {op.label}
-            </button>
-          )
-        })}
+    <section className="mt-2">
+      <div className="mb-4">
+        <ActiveOpHeading activeOp={activeOp} />
       </div>
 
       {activeOp === 'merge' && (
-        <div className="mt-5">
+        <div className="mt-2">
           <button
             type="button"
             onClick={onMerge}

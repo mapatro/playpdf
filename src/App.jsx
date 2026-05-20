@@ -4,6 +4,7 @@ import PagePreview from './components/PagePreview.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 import PrivacyFooter from './components/PrivacyFooter.jsx'
 import InfoSections from './components/InfoSections.jsx'
+import Sidebar from './components/Sidebar.jsx'
 import {
   mergePdfs,
   splitPdfRange,
@@ -37,6 +38,7 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [activeOp, setActiveOp] = useState('merge')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   const addFiles = useCallback(async (incoming) => {
     const entries = incoming.map((file) => ({
@@ -314,14 +316,28 @@ export default function App() {
 
   return (
     <div className="flex min-h-full flex-col bg-orange-50/40 dark:bg-slate-950">
+      {/* Top bar */}
       <header className="sticky top-0 z-50 border-b border-orange-100 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-        <nav className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-3">
-          <a
-            href="/"
-            className="flex items-center gap-2 text-xl font-bold tracking-tight text-orange-600 dark:text-orange-400"
-          >
-            <span aria-hidden="true">📄</span> playPDF
-          </a>
+        <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Open tools menu"
+              onClick={() => setSidebarOpen(true)}
+              className="rounded-md p-1.5 text-slate-600 hover:bg-orange-50 hover:text-orange-600 dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
+            >
+              {/* Hamburger glyph (CSS bars) */}
+              <span aria-hidden="true" className="block h-0.5 w-5 bg-current" />
+              <span aria-hidden="true" className="mt-1 block h-0.5 w-5 bg-current" />
+              <span aria-hidden="true" className="mt-1 block h-0.5 w-5 bg-current" />
+            </button>
+            <a
+              href="/"
+              className="flex items-center gap-2 text-xl font-bold tracking-tight text-orange-600 dark:text-orange-400"
+            >
+              <span aria-hidden="true">📄</span> playPDF
+            </a>
+          </div>
           <a
             href="https://patroventure.com"
             className="text-sm font-medium text-slate-500 transition-colors hover:text-orange-600 dark:text-slate-400 dark:hover:text-orange-400"
@@ -331,53 +347,81 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:py-14">
-        <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
-            Free, private PDF tools
-          </h1>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500 dark:text-slate-400 sm:text-base">
-            Merge, split, rotate, reorder and delete PDF pages — 100% in
-            your browser. Your files never leave your device.
-          </p>
-        </header>
+      {/* Editor body: sidebar + main workspace */}
+      <div className="relative mx-auto flex w-full max-w-7xl flex-1">
+        {/* Sidebar — persistent on md+, drawer on mobile */}
+        <aside
+          aria-label="Tools"
+          className={`fixed inset-y-0 left-0 z-40 w-64 transform border-r border-orange-100 bg-white transition-transform duration-200 ease-out dark:border-slate-800 dark:bg-slate-900 md:sticky md:top-[57px] md:z-10 md:h-[calc(100vh-57px)] md:w-56 md:translate-x-0 ${
+            sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+          }`}
+        >
+          <Sidebar
+            activeOp={activeOp}
+            onSelectOp={selectOp}
+            busy={busy}
+            onClose={() => setSidebarOpen(false)}
+          />
+        </aside>
 
-        {/* Hide the PDF-input UI when the active op brings its own input
-            (e.g. Images → PDF accepts image files via its own picker). */}
-        {activeOp !== 'jpg-to-pdf' && (
-          <>
-            <FileUpload
-              files={files}
-              onAddFiles={addFiles}
-              onRemoveFile={removeFile}
-            />
-            <PagePreview files={files} />
-          </>
+        {/* Mobile backdrop when drawer open */}
+        {sidebarOpen && (
+          <button
+            type="button"
+            aria-label="Close menu"
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          />
         )}
 
-        <OperationPanel
-          files={files}
-          busy={busy}
-          activeOp={activeOp}
-          onSelectOp={selectOp}
-          onMerge={handleMerge}
-          onSplitRange={handleSplitRange}
-          onSplitAll={handleSplitAll}
-          onRotate={handleRotate}
-          onReorder={handleReorder}
-          onDelete={handleDelete}
-          onImagesToPdf={handleImagesToPdf}
-          onPdfToJpg={handlePdfToJpg}
-          onRedact={handleRedact}
-          onSignAndFill={handleSignAndFill}
-          onInspectForm={handleInspectForm}
-          onFillForm={handleFillForm}
-          message={message}
-          error={error}
-        />
+        {/* Main workspace */}
+        <main className="min-w-0 flex-1 px-4 py-6 sm:py-8 md:px-8">
+          <header className="mb-6">
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
+              Free, private PDF editor
+            </h1>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              Pick a tool from the sidebar. All processing happens in
+              your browser — files never leave your device.
+            </p>
+          </header>
 
-        <InfoSections />
-      </main>
+          {/* Persistent PDF upload + preview (hidden when the active op
+              brings its own input — e.g. Images → PDF). */}
+          {activeOp !== 'jpg-to-pdf' && (
+            <>
+              <FileUpload
+                files={files}
+                onAddFiles={addFiles}
+                onRemoveFile={removeFile}
+              />
+              <PagePreview files={files} />
+            </>
+          )}
+
+          <OperationPanel
+            files={files}
+            busy={busy}
+            activeOp={activeOp}
+            onMerge={handleMerge}
+            onSplitRange={handleSplitRange}
+            onSplitAll={handleSplitAll}
+            onRotate={handleRotate}
+            onReorder={handleReorder}
+            onDelete={handleDelete}
+            onImagesToPdf={handleImagesToPdf}
+            onPdfToJpg={handlePdfToJpg}
+            onRedact={handleRedact}
+            onSignAndFill={handleSignAndFill}
+            onInspectForm={handleInspectForm}
+            onFillForm={handleFillForm}
+            message={message}
+            error={error}
+          />
+
+          <InfoSections />
+        </main>
+      </div>
 
       <PrivacyFooter />
     </div>
