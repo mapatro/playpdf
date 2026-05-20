@@ -13,6 +13,7 @@ import {
   deletePages,
   imagesToPdf,
   redactPdf,
+  signAndFillPdf,
   downloadBlob,
 } from './services/pdfService.js'
 import {
@@ -216,6 +217,30 @@ export default function App() {
     [runSingle],
   )
 
+  const handleSignAndFill = useCallback(
+    (file, placements) =>
+      runSingle(async () => {
+        const bytes = await signAndFillPdf(
+          file.buffer ?? file.file,
+          placements,
+        )
+        const name = `${baseName(file.file.name)}-signed.pdf`
+        downloadBlob(bytes, name)
+        const total = Object.values(placements).reduce(
+          (s, items) => s + items.length,
+          0,
+        )
+        track('signAndFill', {
+          pageCount: file.pageCount,
+          placements: total,
+        })
+        setMessage(
+          `Added ${total} signature/text item${total === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
   const handleRedact = useCallback(
     (file, rectsByPage) =>
       runSingle(async () => {
@@ -314,6 +339,7 @@ export default function App() {
           onImagesToPdf={handleImagesToPdf}
           onPdfToJpg={handlePdfToJpg}
           onRedact={handleRedact}
+          onSignAndFill={handleSignAndFill}
           message={message}
           error={error}
         />

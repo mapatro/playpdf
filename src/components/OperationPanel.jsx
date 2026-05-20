@@ -7,6 +7,7 @@ const OPERATIONS = [
   { id: 'rotate', label: 'Rotate' },
   { id: 'reorder', label: 'Reorder' },
   { id: 'delete', label: 'Delete' },
+  { id: 'sign', label: 'Sign & Fill' },
   { id: 'redact', label: 'Redact' },
   { id: 'jpg-to-pdf', label: 'Images → PDF' },
   { id: 'pdf-to-jpg', label: 'PDF → JPG' },
@@ -31,6 +32,7 @@ export default function OperationPanel({
   onImagesToPdf,
   onPdfToJpg,
   onRedact,
+  onSignAndFill,
   message,
   error,
 }) {
@@ -100,6 +102,7 @@ export default function OperationPanel({
         activeOp === 'reorder' ||
         activeOp === 'delete' ||
         activeOp === 'redact' ||
+        activeOp === 'sign' ||
         activeOp === 'pdf-to-jpg') && (
         <SingleFileOps
           op={activeOp}
@@ -114,6 +117,7 @@ export default function OperationPanel({
           onReorder={onReorder}
           onDelete={onDelete}
           onRedact={onRedact}
+          onSignAndFill={onSignAndFill}
           onPdfToJpg={onPdfToJpg}
         />
       )}
@@ -145,6 +149,7 @@ function SingleFileOps({
   onReorder,
   onDelete,
   onRedact,
+  onSignAndFill,
   onPdfToJpg,
 }) {
   if (readyFiles.length === 0) {
@@ -222,7 +227,472 @@ function SingleFileOps({
           onRedact={onRedact}
         />
       )}
+      {selectedFile && op === 'sign' && (
+        <SignAndFillPanel
+          key={selectedFile.id}
+          file={selectedFile}
+          busy={busy}
+          onSignAndFill={onSignAndFill}
+        />
+      )}
     </div>
+  )
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Sign & Fill panel: draw or type a signature, type free text, click on
+// any page thumbnail to place the current tool. Everything lives in
+// normalized [0,1] page coords (top-left origin) so the PDF service can
+// stay UI-agnostic.
+
+function SignatureCanvas({ disabled, onSave }) {
+  const canvasRef = useRef(null)
+  const drawing = useRef(false)
+  const last = useRef(null)
+  const [hasInk, setHasInk] = useState(false)
+
+  const getCtx = () => canvasRef.current?.getContext('2d')
+
+  const pointAt = (e) => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+    const rect = canvas.getBoundingClientRect()
+    // Canvas is 400x150 internally; CSS may scale it. Map screen→canvas.
+    const sx = canvas.width / rect.width
+    const sy = canvas.height / rect.height
+    return {
+      x: (e.clientX - rect.left) * sx,
+      y: (e.clientY - rect.top) * sy,
+    }
+  }
+
+  const onPointerDown = (e) => {
+    if (disabled) return
+    e.preventDefault()
+    canvasRef.current?.setPointerCapture?.(e.pointerId)
+    drawing.current = true
+    last.current = pointAt(e)
+    setHasInk(true)
+  }
+  const onPointerMove = (e) => {
+    if (!drawing.current) return
+    const ctx = getCtx()
+    if (!ctx) return
+    const p = pointAt(e)
+    if (!p || !last.current) return
+    ctx.lineWidth = 2.5
+    ctx.lineCap = 'round'
+    ctx.strokeStyle = '#0f172a'
+    ctx.beginPath()
+    ctx.moveTo(last.current.x, last.current.y)
+    ctx.lineTo(p.x, p.y)
+    ctx.stroke()
+    last.current = p
+  }
+  const onPointerUp = () => {
+    drawing.current = false
+    last.current = null
+  }
+
+  const clear = () => {
+    const ctx = getCtx()
+    if (!ctx || !canvasRef.current) return
+    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+    setHasInk(false)
+  }
+
+  const save = async () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const blob = await new Promise((resolve, reject) =>
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error('Canvas blob failed'))),
+        'image/png',
+      ),
+    )
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    const dataUrl = URL.createObjectURL(blob)
+    onSave({ bytes, dataUrl })
+  }
+
+  return (
+    <div>
+      <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+        Draw your signature below (touch, stylus, or mouse).
+      </p>
+      <canvas
+        ref={canvasRef}
+        width={400}
+        height={150}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerUp}
+        className="block w-full max-w-md rounded border border-slate-300 dark:border-slate-600 bg-white touch-none"
+        style={{ touchAction: 'none' }}
+      />
+      <div className="mt-2 flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={disabled || !hasInk}
+          onClick={save}
+          className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+        >
+          Use this signature
+        </button>
+        <button
+          type="button"
+          disabled={disabled || !hasInk}
+          onClick={clear}
+          className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
+        >
+          Clear
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function SignAndFillPanel({ file, busy, onSignAndFill }) {
+  const { thumbs, loading, err } = useAllThumbnails(file)
+  const [tool, setTool] = useState('sig') // 'sig' | 'text'
+  const [signature, setSignature] = useState(null) // { bytes, dataUrl }
+  const [sigWidthPct, setSigWidthPct] = useState(25) // % of page width
+  const [text, setText] = useState('')
+  const [fontSize, setFontSize] = useState(12)
+  const [placements, setPlacements] = useState({}) // {pageIdx: [{kind, x, y, ...}]}
+
+  const totalPlacements = Object.values(placements).reduce(
+    (s, p) => s + p.length,
+    0,
+  )
+
+  const placeOnPage = (idx, x, y) => {
+    if (tool === 'sig') {
+      if (!signature) return
+      setPlacements((prev) => ({
+        ...prev,
+        [idx]: [
+          ...(prev[idx] || []),
+          {
+            kind: 'sig',
+            x,
+            y,
+            width: sigWidthPct / 100,
+            png: signature.bytes,
+            dataUrl: signature.dataUrl,
+          },
+        ],
+      }))
+    } else if (tool === 'text') {
+      if (!text) return
+      setPlacements((prev) => ({
+        ...prev,
+        [idx]: [
+          ...(prev[idx] || []),
+          { kind: 'text', x, y, text, fontSize },
+        ],
+      }))
+    }
+  }
+
+  const removePlacement = (idx, pi) =>
+    setPlacements((prev) => {
+      const next = { ...prev }
+      const arr = (next[idx] || []).slice()
+      arr.splice(pi, 1)
+      if (arr.length === 0) delete next[idx]
+      else next[idx] = arr
+      return next
+    })
+
+  const apply = () => {
+    // Strip dataUrl before sending to the service.
+    const out = {}
+    for (const [k, items] of Object.entries(placements)) {
+      out[k] = items.map(({ dataUrl, ...rest }) => rest)
+    }
+    onSignAndFill(file, out)
+  }
+
+  return (
+    <div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Sign and fill PDFs without uploading them. Draw a signature or
+        type free text, then click a page thumbnail to drop it where you
+        want it. Click any placed item to remove.
+      </p>
+
+      {/* Tool toggle */}
+      <div
+        role="radiogroup"
+        aria-label="Tool"
+        className="mb-4 inline-flex rounded-lg border border-orange-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-1"
+      >
+        <button
+          type="button"
+          role="radio"
+          aria-checked={tool === 'sig'}
+          disabled={busy}
+          onClick={() => setTool('sig')}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            tool === 'sig'
+              ? 'bg-orange-600 text-white'
+              : 'text-slate-600 dark:text-slate-300 hover:text-orange-600'
+          }`}
+        >
+          Signature
+        </button>
+        <button
+          type="button"
+          role="radio"
+          aria-checked={tool === 'text'}
+          disabled={busy}
+          onClick={() => setTool('text')}
+          className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+            tool === 'text'
+              ? 'bg-orange-600 text-white'
+              : 'text-slate-600 dark:text-slate-300 hover:text-orange-600'
+          }`}
+        >
+          Text
+        </button>
+      </div>
+
+      {/* Tool-specific controls */}
+      {tool === 'sig' && (
+        <div className="mb-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          {!signature && (
+            <SignatureCanvas
+              disabled={busy}
+              onSave={setSignature}
+            />
+          )}
+          {signature && (
+            <div>
+              <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+                Your signature is ready — click any page below to place it.
+              </p>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex items-center gap-2 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1">
+                  <img
+                    src={signature.dataUrl}
+                    alt="Your signature"
+                    className="max-h-12"
+                  />
+                </div>
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                  Width
+                  <span className="ml-1 text-slate-400 dark:text-slate-500">
+                    ({sigWidthPct}% of page)
+                  </span>
+                  <input
+                    type="range"
+                    min={5}
+                    max={60}
+                    value={sigWidthPct}
+                    disabled={busy}
+                    onChange={(e) => setSigWidthPct(Number(e.target.value))}
+                    className="mt-1 block w-40"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setSignature(null)}
+                  className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
+                >
+                  Draw again
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {tool === 'text' && (
+        <div className="mb-4 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+          <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
+            Type what you want to drop on the page, then click a thumbnail.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Text
+              <input
+                type="text"
+                value={text}
+                disabled={busy}
+                placeholder="e.g. John Smith"
+                onChange={(e) => setText(e.target.value)}
+                className="mt-1 block w-64 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-slate-100 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+              Font size
+              <input
+                type="number"
+                min={6}
+                max={72}
+                value={fontSize}
+                disabled={busy}
+                onChange={(e) =>
+                  setFontSize(
+                    Math.max(6, Math.min(72, Number(e.target.value) || 12)),
+                  )
+                }
+                className="mt-1 block w-20 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 dark:text-slate-100 px-2 py-1 text-sm"
+              />
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Apply / clear */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || totalPlacements === 0}
+          onClick={apply}
+          className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+        >
+          {busy
+            ? 'Working…'
+            : totalPlacements === 0
+              ? 'Click a page to place'
+              : `Apply ${totalPlacements} item${totalPlacements === 1 ? '' : 's'} & Download`}
+        </button>
+        <button
+          type="button"
+          disabled={busy || totalPlacements === 0}
+          onClick={() => setPlacements({})}
+          className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
+        >
+          Clear all
+        </button>
+        <span className="self-center text-[11px] text-slate-400 dark:text-slate-500">
+          {tool === 'sig'
+            ? signature
+              ? 'Tap a page to place your signature.'
+              : 'Draw a signature first.'
+            : text
+              ? 'Tap a page to place your text.'
+              : 'Type some text first.'}
+        </span>
+      </div>
+
+      {loading && (
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          Rendering all pages…
+        </p>
+      )}
+      {err && <p className="text-xs text-red-500 dark:text-red-400">{err}</p>}
+
+      {thumbs && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          {thumbs.map((src, i) => (
+            <SignThumb
+              key={i}
+              src={src}
+              pageIdx={i}
+              busy={busy}
+              items={placements[i] || []}
+              tool={tool}
+              canPlace={tool === 'sig' ? !!signature : !!text}
+              onPlace={(x, y) => placeOnPage(i, x, y)}
+              onRemove={(pi) => removePlacement(i, pi)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SignThumb({
+  src,
+  pageIdx,
+  busy,
+  items,
+  tool,
+  canPlace,
+  onPlace,
+  onRemove,
+}) {
+  const boxRef = useRef(null)
+
+  const onClick = (e) => {
+    if (busy || !canPlace) return
+    const box = boxRef.current
+    if (!box) return
+    const rect = box.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    onPlace(Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y)))
+  }
+
+  const cursor = busy
+    ? 'not-allowed'
+    : canPlace
+      ? 'crosshair'
+      : 'default'
+
+  return (
+    <figure className="flex flex-col items-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2">
+      <div
+        ref={boxRef}
+        onClick={onClick}
+        className="relative w-full overflow-hidden select-none"
+        style={{ cursor }}
+      >
+        <img
+          src={src}
+          alt={`Page ${pageIdx + 1}`}
+          draggable={false}
+          className="block w-full object-contain shadow-sm"
+        />
+        {items.map((item, pi) => (
+          <button
+            key={pi}
+            type="button"
+            title="Click to remove this item"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemove(pi)
+            }}
+            disabled={busy}
+            className="absolute m-0 cursor-pointer border-0 bg-transparent p-0 hover:outline hover:outline-2 hover:outline-red-500"
+            style={{
+              left: `${item.x * 100}%`,
+              top: `${item.y * 100}%`,
+              // Signature: width is a fraction of the page → render at that
+              // fraction of the thumbnail's width. Text: shrink-wrap.
+              width:
+                item.kind === 'sig' ? `${item.width * 100}%` : 'auto',
+            }}
+          >
+            {item.kind === 'sig' && item.dataUrl && (
+              <img
+                src={item.dataUrl}
+                alt="signature"
+                draggable={false}
+                className="block w-full"
+              />
+            )}
+            {item.kind === 'text' && (
+              <span
+                className="whitespace-pre text-slate-900"
+                style={{ fontSize: `${item.fontSize * 0.4}px` }}
+              >
+                {item.text}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <figcaption className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+        p{pageIdx + 1} · {items.length} item{items.length === 1 ? '' : 's'}
+      </figcaption>
+    </figure>
   )
 }
 

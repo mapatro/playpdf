@@ -15,7 +15,8 @@
     "test:delete": "node scripts/test-delete.mjs",
     "test:images": "node scripts/test-images.mjs",
     "test:redact": "node scripts/test-redact.mjs",
-    "test": "node scripts/test-merge.mjs && node scripts/test-split.mjs && node scripts/test-rotate.mjs && node scripts/test-reorder.mjs && node scripts/test-delete.mjs && node scripts/test-images.mjs && node scripts/test-redact.mjs"
+    "test:sign": "node scripts/test-sign.mjs",
+    "test": "node scripts/test-merge.mjs && node scripts/test-split.mjs && node scripts/test-rotate.mjs && node scripts/test-reorder.mjs && node scripts/test-delete.mjs && node scripts/test-images.mjs && node scripts/test-redact.mjs && node scripts/test-sign.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",

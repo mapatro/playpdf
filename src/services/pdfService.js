@@ -228,6 +228,84 @@ export async function deletePages(input, indicesToRemove) {
 }
 
 /**
+ * Apply signature images and free-text annotations to a PDF.
+ *
+ * Each placement is normalized to [0,1] of the page in TOP-LEFT-origin
+ * space; widths/heights for signatures are fractions of page width;
+ * text size is in PDF points.
+ *
+ * @param {ArrayBuffer|Uint8Array|Blob|File} input
+ * @param {Record<number, Array<
+ *   { kind: 'sig', x: number, y: number, width: number, png: Uint8Array }
+ *   | { kind: 'text', x: number, y: number, text: string, fontSize: number }
+ * >>} placements
+ * @returns {Promise<Uint8Array>} the annotated PDF bytes
+ */
+export async function signAndFillPdf(input, placements) {
+  if (!placements || typeof placements !== 'object') {
+    throw new Error('signAndFillPdf requires a placements map.')
+  }
+  const bytes = await toUint8Array(input)
+  const doc = await PDFDocument.load(bytes)
+  const pages = doc.getPages()
+  // Cache embedded PNGs so we don't re-embed the same signature N times.
+  const sigCache = new Map()
+  let total = 0
+
+  for (const [key, items] of Object.entries(placements)) {
+    const idx = Number(key)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= pages.length) {
+      throw new Error(`Invalid page index ${key}.`)
+    }
+    if (!Array.isArray(items) || items.length === 0) continue
+    const page = pages[idx]
+    const w = page.getWidth()
+    const h = page.getHeight()
+
+    for (const item of items) {
+      if (item.kind === 'sig') {
+        if (!(item.png instanceof Uint8Array)) {
+          throw new Error('Signature item is missing PNG bytes.')
+        }
+        let embedded = sigCache.get(item.png)
+        if (!embedded) {
+          embedded = await doc.embedPng(item.png)
+          sigCache.set(item.png, embedded)
+        }
+        const aspect = embedded.width / embedded.height
+        const sigW = clamp01(item.width) * w
+        const sigH = sigW / aspect
+        page.drawImage(embedded, {
+          x: clamp01(item.x) * w,
+          y: h - clamp01(item.y) * h - sigH,
+          width: sigW,
+          height: sigH,
+        })
+        total += 1
+      } else if (item.kind === 'text') {
+        const fontSize = Number(item.fontSize) || 12
+        const text = String(item.text ?? '')
+        if (!text) continue
+        page.drawText(text, {
+          x: clamp01(item.x) * w,
+          // pdf-lib text uses baseline at y; we anchor at top-left, so
+          // shift down by one font size.
+          y: h - clamp01(item.y) * h - fontSize,
+          size: fontSize,
+          color: rgb(0, 0, 0),
+        })
+        total += 1
+      } else {
+        throw new Error(`Unknown placement kind: ${item.kind}`)
+      }
+    }
+  }
+
+  if (total === 0) throw new Error('No signature or text placements given.')
+  return doc.save()
+}
+
+/**
  * Visually redact rectangular regions on PDF pages by drawing opaque
  * black rectangles over them.
  *

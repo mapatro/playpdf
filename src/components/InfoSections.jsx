@@ -25,6 +25,10 @@ const OPERATIONS = [
     body: 'Pick pages to remove from a PDF — useful for stripping out blank pages, ads or pages you do not want to share. Removed pages never leave your device.',
   },
   {
+    title: 'Sign & fill PDFs',
+    body: 'Draw your signature with your finger, stylus or mouse and drop it on any page; type free text anywhere to fill printable forms. Perfect for signing contracts and filling tax/school PDFs without uploading them anywhere.',
+  },
+  {
     title: 'Redact (black out)',
     body: 'Drag rectangles over sensitive areas to black them out before sharing. Visual redaction first; for irreversible removal of the underlying text, export the redacted PDF as JPG and rebuild it as a new PDF — all client-side, never uploaded.',
   },
