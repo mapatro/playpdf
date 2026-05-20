@@ -7,6 +7,7 @@ const OPERATIONS = [
   { id: 'rotate', label: 'Rotate' },
   { id: 'reorder', label: 'Reorder' },
   { id: 'delete', label: 'Delete' },
+  { id: 'redact', label: 'Redact' },
   { id: 'jpg-to-pdf', label: 'Images → PDF' },
   { id: 'pdf-to-jpg', label: 'PDF → JPG' },
 ]
@@ -29,6 +30,7 @@ export default function OperationPanel({
   onDelete,
   onImagesToPdf,
   onPdfToJpg,
+  onRedact,
   message,
   error,
 }) {
@@ -97,6 +99,7 @@ export default function OperationPanel({
         activeOp === 'rotate' ||
         activeOp === 'reorder' ||
         activeOp === 'delete' ||
+        activeOp === 'redact' ||
         activeOp === 'pdf-to-jpg') && (
         <SingleFileOps
           op={activeOp}
@@ -110,6 +113,7 @@ export default function OperationPanel({
           onRotate={onRotate}
           onReorder={onReorder}
           onDelete={onDelete}
+          onRedact={onRedact}
           onPdfToJpg={onPdfToJpg}
         />
       )}
@@ -140,6 +144,7 @@ function SingleFileOps({
   onRotate,
   onReorder,
   onDelete,
+  onRedact,
   onPdfToJpg,
 }) {
   if (readyFiles.length === 0) {
@@ -209,7 +214,233 @@ function SingleFileOps({
           onPdfToJpg={onPdfToJpg}
         />
       )}
+      {selectedFile && op === 'redact' && (
+        <RedactPanel
+          key={selectedFile.id}
+          file={selectedFile}
+          busy={busy}
+          onRedact={onRedact}
+        />
+      )}
     </div>
+  )
+}
+
+/**
+ * Visual redaction panel: per-page thumbnails where the user drags
+ * rectangles to black out. Rectangles are stored normalized to [0,1] in
+ * the page coordinate space (top-left origin) so the PDF-side knows
+ * nothing about thumbnail pixel sizes.
+ */
+function RedactPanel({ file, busy, onRedact }) {
+  const { thumbs, loading, err } = useAllThumbnails(file)
+  // rectsByPage: { [pageIdx]: [{x, y, width, height} ...] }
+  const [rectsByPage, setRectsByPage] = useState({})
+  const totalRects = Object.values(rectsByPage).reduce(
+    (s, r) => s + r.length,
+    0,
+  )
+
+  const addRect = (idx, rect) =>
+    setRectsByPage((prev) => ({
+      ...prev,
+      [idx]: [...(prev[idx] || []), rect],
+    }))
+
+  const removeRect = (idx, ri) =>
+    setRectsByPage((prev) => {
+      const next = { ...prev }
+      const arr = (next[idx] || []).slice()
+      arr.splice(ri, 1)
+      if (arr.length === 0) delete next[idx]
+      else next[idx] = arr
+      return next
+    })
+
+  const clearPage = (idx) =>
+    setRectsByPage((prev) => {
+      const next = { ...prev }
+      delete next[idx]
+      return next
+    })
+
+  const apply = () => onRedact(file, rectsByPage)
+
+  return (
+    <div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Drag on a page to mark a redaction box. Click any box to remove it.
+        This applies <strong>visual</strong> redaction (an opaque black
+        rectangle is drawn over the area). For irreversible removal of the
+        underlying text, follow up by exporting via <em>PDF → JPG</em> and
+        re-assembling with <em>Images → PDF</em>.
+      </p>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          disabled={busy || totalRects === 0}
+          onClick={apply}
+          className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+        >
+          {busy
+            ? 'Working…'
+            : totalRects === 0
+              ? 'Mark areas to redact'
+              : `Apply ${totalRects} redaction${totalRects === 1 ? '' : 's'} & Download`}
+        </button>
+        <button
+          type="button"
+          disabled={busy || totalRects === 0}
+          onClick={() => setRectsByPage({})}
+          className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
+        >
+          Clear all
+        </button>
+      </div>
+
+      {loading && (
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          Rendering all pages…
+        </p>
+      )}
+      {err && <p className="text-xs text-red-500 dark:text-red-400">{err}</p>}
+
+      {thumbs && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+          {thumbs.map((src, i) => (
+            <RedactThumb
+              key={i}
+              src={src}
+              pageIdx={i}
+              busy={busy}
+              rects={rectsByPage[i] || []}
+              onAddRect={(rect) => addRect(i, rect)}
+              onRemoveRect={(ri) => removeRect(i, ri)}
+              onClearPage={() => clearPage(i)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function RedactThumb({
+  src,
+  pageIdx,
+  busy,
+  rects,
+  onAddRect,
+  onRemoveRect,
+  onClearPage,
+}) {
+  const boxRef = useRef(null)
+  const [dragRect, setDragRect] = useState(null) // {x,y,width,height} 0..1
+
+  const computePoint = (e) => {
+    const box = boxRef.current
+    if (!box) return null
+    const rect = box.getBoundingClientRect()
+    const x = (e.clientX - rect.left) / rect.width
+    const y = (e.clientY - rect.top) / rect.height
+    return { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) }
+  }
+
+  const onMouseDown = (e) => {
+    if (busy) return
+    e.preventDefault()
+    const p = computePoint(e)
+    if (!p) return
+    setDragRect({ x: p.x, y: p.y, width: 0, height: 0, startX: p.x, startY: p.y })
+  }
+
+  const onMouseMove = (e) => {
+    if (!dragRect) return
+    const p = computePoint(e)
+    if (!p) return
+    const x = Math.min(p.x, dragRect.startX)
+    const y = Math.min(p.y, dragRect.startY)
+    const width = Math.abs(p.x - dragRect.startX)
+    const height = Math.abs(p.y - dragRect.startY)
+    setDragRect({ ...dragRect, x, y, width, height })
+  }
+
+  const onMouseUp = () => {
+    if (!dragRect) return
+    if (dragRect.width >= 0.01 && dragRect.height >= 0.01) {
+      onAddRect({
+        x: dragRect.x,
+        y: dragRect.y,
+        width: dragRect.width,
+        height: dragRect.height,
+      })
+    }
+    setDragRect(null)
+  }
+
+  return (
+    <figure className="flex flex-col items-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2">
+      <div
+        ref={boxRef}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+        className="relative w-full overflow-hidden select-none"
+        style={{ cursor: busy ? 'not-allowed' : 'crosshair' }}
+      >
+        <img
+          src={src}
+          alt={`Page ${pageIdx + 1}`}
+          draggable={false}
+          className="block w-full object-contain shadow-sm"
+        />
+        {rects.map((r, ri) => (
+          <button
+            key={ri}
+            type="button"
+            title="Click to remove this redaction"
+            onClick={(e) => {
+              e.stopPropagation()
+              onRemoveRect(ri)
+            }}
+            disabled={busy}
+            className="absolute bg-black/90 hover:bg-red-600/80"
+            style={{
+              left: `${r.x * 100}%`,
+              top: `${r.y * 100}%`,
+              width: `${r.width * 100}%`,
+              height: `${r.height * 100}%`,
+            }}
+          />
+        ))}
+        {dragRect && (
+          <div
+            className="absolute border border-red-500 bg-red-500/30 pointer-events-none"
+            style={{
+              left: `${dragRect.x * 100}%`,
+              top: `${dragRect.y * 100}%`,
+              width: `${dragRect.width * 100}%`,
+              height: `${dragRect.height * 100}%`,
+            }}
+          />
+        )}
+      </div>
+      <figcaption className="mt-1 flex w-full items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+        <span>p{pageIdx + 1} · {rects.length} box{rects.length === 1 ? '' : 'es'}</span>
+        {rects.length > 0 && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onClearPage}
+            className="ml-2 underline hover:text-orange-600"
+          >
+            clear
+          </button>
+        )}
+      </figcaption>
+    </figure>
   )
 }
 

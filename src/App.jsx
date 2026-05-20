@@ -12,6 +12,7 @@ import {
   reorderPages,
   deletePages,
   imagesToPdf,
+  redactPdf,
   downloadBlob,
 } from './services/pdfService.js'
 import {
@@ -215,6 +216,30 @@ export default function App() {
     [runSingle],
   )
 
+  const handleRedact = useCallback(
+    (file, rectsByPage) =>
+      runSingle(async () => {
+        const bytes = await redactPdf(
+          file.buffer ?? file.file,
+          rectsByPage,
+        )
+        const name = `${baseName(file.file.name)}-redacted.pdf`
+        downloadBlob(bytes, name)
+        const totalRects = Object.values(rectsByPage).reduce(
+          (s, r) => s + r.length,
+          0,
+        )
+        track('redact', {
+          pageCount: file.pageCount,
+          rectCount: totalRects,
+        })
+        setMessage(
+          `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
   const handlePdfToJpg = useCallback(
     (file) =>
       runSingle(async () => {
@@ -288,6 +313,7 @@ export default function App() {
           onDelete={handleDelete}
           onImagesToPdf={handleImagesToPdf}
           onPdfToJpg={handlePdfToJpg}
+          onRedact={handleRedact}
           message={message}
           error={error}
         />

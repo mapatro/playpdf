@@ -24,6 +24,14 @@ const OPERATIONS = [
     title: 'Delete pages',
     body: 'Pick pages to remove from a PDF — useful for stripping out blank pages, ads or pages you do not want to share. Removed pages never leave your device.',
   },
+  {
+    title: 'Redact (black out)',
+    body: 'Drag rectangles over sensitive areas to black them out before sharing. Visual redaction first; for irreversible removal of the underlying text, export the redacted PDF as JPG and rebuild it as a new PDF — all client-side, never uploaded.',
+  },
+  {
+    title: 'Images ↔ PDF',
+    body: 'Combine JPG and PNG images into a single PDF, or export every page of a PDF as JPGs in a zip. Useful for converting receipts, ID scans or photos without uploading them anywhere.',
+  },
 ]
 
 const FAQ = [

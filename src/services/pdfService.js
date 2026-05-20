@@ -2,7 +2,7 @@
 // Nothing in this module performs network I/O. Files never leave the
 // user's machine.
 
-import { PDFDocument, degrees } from 'pdf-lib'
+import { PDFDocument, degrees, rgb } from 'pdf-lib'
 import JSZip from 'jszip'
 
 /**
@@ -225,6 +225,67 @@ export async function deletePages(input, indicesToRemove) {
   const pages = await out.copyPages(src, keep)
   pages.forEach((page) => out.addPage(page))
   return out.save()
+}
+
+/**
+ * Visually redact rectangular regions on PDF pages by drawing opaque
+ * black rectangles over them.
+ *
+ * Note: this is VISUAL redaction — any underlying text/objects are still
+ * present in the file and recoverable. For irreversible redaction,
+ * pair it with the PDF → JPG export.
+ *
+ * @param {ArrayBuffer|Uint8Array|Blob|File} input
+ * @param {Record<number, Array<{x:number,y:number,width:number,height:number}>>} rectsByPage
+ *   Keyed by 0-based page index. Each rect is normalized to [0,1] in
+ *   the page's coordinate space with the origin at the TOP-LEFT.
+ * @returns {Promise<Uint8Array>} the redacted PDF bytes
+ */
+export async function redactPdf(input, rectsByPage) {
+  if (!rectsByPage || typeof rectsByPage !== 'object') {
+    throw new Error('redactPdf requires a rectsByPage map.')
+  }
+  const bytes = await toUint8Array(input)
+  const doc = await PDFDocument.load(bytes)
+  const pages = doc.getPages()
+
+  let total = 0
+  for (const [key, rects] of Object.entries(rectsByPage)) {
+    const idx = Number(key)
+    if (!Number.isInteger(idx) || idx < 0 || idx >= pages.length) {
+      throw new Error(`Invalid page index ${key}.`)
+    }
+    if (!Array.isArray(rects) || rects.length === 0) continue
+    const page = pages[idx]
+    const w = page.getWidth()
+    const h = page.getHeight()
+    for (const r of rects) {
+      const rx = clamp01(r.x)
+      const ry = clamp01(r.y)
+      const rw = clamp01(r.width)
+      const rh = clamp01(r.height)
+      if (rw <= 0 || rh <= 0) continue
+      page.drawRectangle({
+        x: rx * w,
+        // Flip Y: input is top-left origin, pdf-lib is bottom-left.
+        y: h - (ry + rh) * h,
+        width: rw * w,
+        height: rh * h,
+        color: rgb(0, 0, 0),
+        opacity: 1,
+      })
+      total += 1
+    }
+  }
+
+  if (total === 0) throw new Error('No redaction rectangles given.')
+  return doc.save()
+}
+
+function clamp01(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return 0
+  return Math.max(0, Math.min(1, n))
 }
 
 /**
