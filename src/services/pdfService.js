@@ -187,6 +187,47 @@ export async function reorderPages(input, newOrder) {
 }
 
 /**
+ * Remove the given 0-based page indices from a PDF, returning a new PDF
+ * with the remaining pages in their original order.
+ *
+ * @param {ArrayBuffer|Uint8Array|Blob|File} input
+ * @param {number[]} indicesToRemove 0-based page indices to remove
+ * @returns {Promise<Uint8Array>} the trimmed PDF bytes
+ */
+export async function deletePages(input, indicesToRemove) {
+  const bytes = await toUint8Array(input)
+  const src = await PDFDocument.load(bytes)
+  const pageCount = src.getPageCount()
+
+  if (!Array.isArray(indicesToRemove)) {
+    throw new Error('deletePages requires an array of indices.')
+  }
+  const remove = new Set()
+  for (const idx of indicesToRemove) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= pageCount) {
+      throw new Error(
+        `Invalid page index ${idx}: must be 0…${pageCount - 1}.`,
+      )
+    }
+    remove.add(idx)
+  }
+  if (remove.size === 0) {
+    throw new Error('No pages selected for deletion.')
+  }
+  if (remove.size === pageCount) {
+    throw new Error('Refusing to delete every page of the PDF.')
+  }
+
+  const keep = []
+  for (let i = 0; i < pageCount; i++) if (!remove.has(i)) keep.push(i)
+
+  const out = await PDFDocument.create()
+  const pages = await out.copyPages(src, keep)
+  pages.forEach((page) => out.addPage(page))
+  return out.save()
+}
+
+/**
  * Trigger a browser download of bytes as a file. Uses an object URL that
  * is revoked afterwards. Nothing is uploaded.
  * @param {Uint8Array|Blob} data

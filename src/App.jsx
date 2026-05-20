@@ -10,6 +10,7 @@ import {
   splitPdfAll,
   rotatePdf,
   reorderPages,
+  deletePages,
   downloadBlob,
 } from './services/pdfService.js'
 import { renderThumbnails } from './services/pdfRenderService.js'
@@ -178,19 +179,36 @@ export default function App() {
     [runSingle],
   )
 
+  const handleDelete = useCallback(
+    (file, indices) =>
+      runSingle(async () => {
+        const bytes = await deletePages(file.buffer ?? file.file, indices)
+        const name = `${baseName(file.file.name)}-trimmed.pdf`
+        downloadBlob(bytes, name)
+        track('delete', {
+          pageCount: file.pageCount,
+          removed: indices.length,
+        })
+        setMessage(
+          `Deleted ${indices.length} page${indices.length === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
   return (
-    <div className="flex min-h-full flex-col bg-orange-50/40">
-      <header className="sticky top-0 z-50 border-b border-orange-100 bg-white/90 backdrop-blur">
+    <div className="flex min-h-full flex-col bg-orange-50/40 dark:bg-slate-950">
+      <header className="sticky top-0 z-50 border-b border-orange-100 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
         <nav className="mx-auto flex w-full max-w-4xl items-center justify-between px-4 py-3">
           <a
             href="/"
-            className="flex items-center gap-2 text-xl font-bold tracking-tight text-orange-600"
+            className="flex items-center gap-2 text-xl font-bold tracking-tight text-orange-600 dark:text-orange-400"
           >
             <span aria-hidden="true">📄</span> playPDF
           </a>
           <a
             href="https://patroventure.com"
-            className="text-sm font-medium text-slate-500 transition-colors hover:text-orange-600"
+            className="text-sm font-medium text-slate-500 transition-colors hover:text-orange-600 dark:text-slate-400 dark:hover:text-orange-400"
           >
             A PatroVenture project ↗
           </a>
@@ -199,12 +217,12 @@ export default function App() {
 
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-10 sm:py-14">
         <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-4xl">
             Free, private PDF tools
           </h1>
-          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500 sm:text-base">
-            Merge, split, rotate and reorder PDFs — 100% in your browser.
-            Your files never leave your device.
+          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-500 dark:text-slate-400 sm:text-base">
+            Merge, split, rotate, reorder and delete PDF pages — 100% in
+            your browser. Your files never leave your device.
           </p>
         </header>
 
@@ -226,6 +244,7 @@ export default function App() {
           onSplitAll={handleSplitAll}
           onRotate={handleRotate}
           onReorder={handleReorder}
+          onDelete={handleDelete}
           message={message}
           error={error}
         />

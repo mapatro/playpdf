@@ -51,12 +51,12 @@ export default function FileUpload({ files, onAddFiles, onRemoveFile }) {
         onDrop={onDrop}
         className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed px-6 py-12 text-center transition-colors ${
           dragActive
-            ? 'border-orange-500 bg-orange-50'
-            : 'border-slate-300 bg-white hover:border-orange-400'
+            ? 'border-orange-500 bg-orange-50 dark:border-orange-400 dark:bg-orange-950/30'
+            : 'border-slate-300 bg-white hover:border-orange-400 dark:border-slate-700 dark:bg-slate-900 dark:hover:border-orange-400'
         }`}
       >
         <svg
-          className="mb-3 h-10 w-10 text-slate-400"
+          className="mb-3 h-10 w-10 text-slate-400 dark:text-slate-500"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -68,10 +68,10 @@ export default function FileUpload({ files, onAddFiles, onRemoveFile }) {
             d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"
           />
         </svg>
-        <p className="text-sm font-medium text-slate-700">
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-200">
           Drag &amp; drop PDFs here, or click to choose
         </p>
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
           PDF files only · processed entirely in your browser
         </p>
         <input
@@ -88,24 +88,24 @@ export default function FileUpload({ files, onAddFiles, onRemoveFile }) {
       </div>
 
       {files.length > 0 && (
-        <ul className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white">
+        <ul className="mt-4 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
           {files.map((f) => (
             <li
               key={f.id}
               className="flex items-center justify-between gap-3 px-4 py-3"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-slate-800">
+                <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-100">
                   {f.file.name}
                 </p>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-400 dark:text-slate-500">
                   {formatBytes(f.file.size)}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => onRemoveFile(f.id)}
-                className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-red-600"
+                className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-red-400"
                 aria-label={`Remove ${f.file.name}`}
               >
                 Remove

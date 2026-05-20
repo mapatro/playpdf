@@ -20,6 +20,10 @@ const OPERATIONS = [
     title: 'Reorder pages',
     body: 'Drag page thumbnails to rearrange them, then export a reordered PDF. Useful for fixing scan order or moving sections around, entirely on your device.',
   },
+  {
+    title: 'Delete pages',
+    body: 'Pick pages to remove from a PDF — useful for stripping out blank pages, ads or pages you do not want to share. Removed pages never leave your device.',
+  },
 ]
 
 const FAQ = [
@@ -53,17 +57,17 @@ export default function InfoSections() {
   return (
     <div className="mt-16 space-y-14">
       <section>
-        <h2 className="text-xl font-bold tracking-tight text-slate-900">
+        <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
           How playPDF works
         </h2>
-        <p className="mt-3 text-sm leading-relaxed text-slate-600">
+        <p className="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
           playPDF is a free, privacy-first PDF toolkit that runs 100% in
           your browser. There is no upload step: when you add a file, it is
           read and processed locally on your own device, then the result is
           downloaded straight back to you. Nothing is sent to a server, so
           you can work with sensitive or confidential PDFs safely.
         </p>
-        <ol className="mt-4 space-y-2 text-sm text-slate-600">
+        <ol className="mt-4 space-y-2 text-sm text-slate-600 dark:text-slate-300">
           <li>
             <span className="font-semibold text-orange-600">1.</span> Drag
             in a PDF (or several) — they stay on your device.
@@ -81,19 +85,19 @@ export default function InfoSections() {
       </section>
 
       <section>
-        <h2 className="text-xl font-bold tracking-tight text-slate-900">
+        <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
           What you can do
         </h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
           {OPERATIONS.map(({ title, body }) => (
             <div
               key={title}
-              className="rounded-lg border border-orange-100 bg-white p-4"
+              className="rounded-lg border border-orange-100 bg-white p-4 dark:border-slate-800 dark:bg-slate-900"
             >
-              <h3 className="text-sm font-semibold text-slate-800">
+              <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
                 {title}
               </h3>
-              <p className="mt-1.5 text-sm leading-relaxed text-slate-600">
+              <p className="mt-1.5 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
                 {body}
               </p>
             </div>
@@ -102,19 +106,19 @@ export default function InfoSections() {
       </section>
 
       <section>
-        <h2 className="text-xl font-bold tracking-tight text-slate-900">
+        <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
           Frequently asked questions
         </h2>
-        <div className="mt-4 divide-y divide-orange-100 overflow-hidden rounded-lg border border-orange-100 bg-white">
+        <div className="mt-4 divide-y divide-orange-100 overflow-hidden rounded-lg border border-orange-100 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
           {FAQ.map(({ q, a }) => (
             <details key={q} className="group px-4 py-3">
-              <summary className="cursor-pointer list-none text-sm font-medium text-slate-800 marker:content-none">
+              <summary className="cursor-pointer list-none text-sm font-medium text-slate-800 marker:content-none dark:text-slate-100">
                 <span className="text-orange-600 group-open:rotate-90 inline-block transition-transform">
                   ›
                 </span>{' '}
                 {q}
               </summary>
-              <p className="mt-2 pl-4 text-sm leading-relaxed text-slate-600">
+              <p className="mt-2 pl-4 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
                 {a}
               </p>
             </details>

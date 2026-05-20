@@ -12,7 +12,8 @@
     "test:split": "node scripts/test-split.mjs",
     "test:rotate": "node scripts/test-rotate.mjs",
     "test:reorder": "node scripts/test-reorder.mjs",
-    "test": "node scripts/test-merge.mjs && node scripts/test-split.mjs && node scripts/test-rotate.mjs && node scripts/test-reorder.mjs"
+    "test:delete": "node scripts/test-delete.mjs",
+    "test": "node scripts/test-merge.mjs && node scripts/test-split.mjs && node scripts/test-rotate.mjs && node scripts/test-reorder.mjs && node scripts/test-delete.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",
