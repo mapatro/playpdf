@@ -80,3 +80,10 @@ src/
 scripts/           test-merge.mjs (merge logic test)
 .github/workflows/ deploy.yml (GitHub Pages)
 ```
+
+## License
+
+[MIT](./LICENSE) — Copyright © PatroVenture.
+
+Open source on purpose: the "no upload" privacy claim is verifiable
+because the code is public.
