@@ -39,6 +39,10 @@ export default function App() {
   const [error, setError] = useState('')
   const [activeOp, setActiveOp] = useState('merge')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // Last PDF-output result, so the user can chain it into the next op
+  // without re-downloading and re-uploading.
+  //   { bytes, name, kind: 'replace' | 'add', targetFileId? }
+  const [lastResult, setLastResult] = useState(null)
 
   const addFiles = useCallback(async (incoming) => {
     const entries = incoming.map((file) => ({
@@ -94,6 +98,7 @@ export default function App() {
     setBusy(true)
     setMessage('')
     setError('')
+    setLastResult(null)
     try {
       const sources = files.map((f) => f.buffer ?? f.file)
       const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0)
@@ -109,6 +114,11 @@ export default function App() {
       setMessage(
         `Merged ${files.length} files. Your download (merged.pdf) should start automatically.`,
       )
+      setLastResult({
+        bytes: mergedBytes,
+        name: 'merged.pdf',
+        kind: 'add',
+      })
     } catch (err) {
       console.error(err)
       setError(err?.message || 'Something went wrong while merging.')
@@ -121,6 +131,7 @@ export default function App() {
     setBusy(true)
     setMessage('')
     setError('')
+    setLastResult(null)
     try {
       await fn()
     } catch (err) {
@@ -130,6 +141,57 @@ export default function App() {
       setBusy(false)
     }
   }, [])
+
+  const useResultAsInput = useCallback(async () => {
+    if (!lastResult) return
+    setBusy(true)
+    setError('')
+    try {
+      const { bytes, name, kind, targetFileId } = lastResult
+      const fileObj = new File([bytes], name, { type: 'application/pdf' })
+      const { pageCount, thumbnails } = await renderThumbnails(bytes, {
+        maxPages: 1,
+      })
+      if (kind === 'replace' && targetFileId) {
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === targetFileId
+              ? {
+                  ...f,
+                  file: fileObj,
+                  buffer: bytes,
+                  status: 'ready',
+                  thumbnails,
+                  pageCount,
+                }
+              : f,
+          ),
+        )
+        setMessage(`Now editing the result (${name}).`)
+      } else {
+        // 'add' kind (merge, Images → PDF): append as a new file.
+        const newEntry = {
+          id: nextId(),
+          file: fileObj,
+          status: 'ready',
+          thumbnails,
+          pageCount,
+          buffer: bytes,
+        }
+        setFiles((prev) => [...prev, newEntry])
+        // If the user is in jpg-to-pdf mode (which hides PDF workspace),
+        // move them back to a PDF op so they can see the new file.
+        if (activeOp === 'jpg-to-pdf') setActiveOp('merge')
+        setMessage(`Added the result (${name}) to the workspace.`)
+      }
+      setLastResult(null)
+    } catch (err) {
+      console.error(err)
+      setError(err?.message || 'Could not load the result as input.')
+    } finally {
+      setBusy(false)
+    }
+  }, [lastResult, activeOp])
 
   const handleSplitRange = useCallback(
     (file, from, to) =>
@@ -141,6 +203,7 @@ export default function App() {
         setMessage(
           `Extracted pages ${from}–${to}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -172,6 +235,7 @@ export default function App() {
         setMessage(
           `Rotated PDF. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -186,6 +250,7 @@ export default function App() {
         setMessage(
           `Reordered pages. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -203,6 +268,7 @@ export default function App() {
         setMessage(
           `Deleted ${indices.length} page${indices.length === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -217,6 +283,7 @@ export default function App() {
         setMessage(
           `Built a PDF from ${images.length} image${images.length === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'add' })
       }),
     [runSingle],
   )
@@ -245,6 +312,7 @@ export default function App() {
         setMessage(
           `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -269,6 +337,7 @@ export default function App() {
         setMessage(
           `Added ${total} signature/text item${total === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -293,6 +362,7 @@ export default function App() {
         setMessage(
           `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
         )
+        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
     [runSingle],
   )
@@ -417,6 +487,8 @@ export default function App() {
             onFillForm={handleFillForm}
             message={message}
             error={error}
+            lastResult={lastResult}
+            onUseResultAsInput={useResultAsInput}
           />
 
           <InfoSections />

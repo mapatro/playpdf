@@ -25,6 +25,8 @@ export default function OperationPanel({
   onFillForm,
   message,
   error,
+  lastResult,
+  onUseResultAsInput,
 }) {
   const fileCount = files.length
   const canMerge = fileCount >= 2 && !busy
@@ -102,10 +104,25 @@ export default function OperationPanel({
       )}
 
       {message && (
-        <p className="mt-4 text-sm font-medium text-green-600">{message}</p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <p className="text-sm font-medium text-green-600 dark:text-green-400">
+            {message}
+          </p>
+          {lastResult && onUseResultAsInput && (
+            <button
+              type="button"
+              onClick={onUseResultAsInput}
+              className="rounded-md border border-orange-300 bg-white px-3 py-1 text-xs font-medium text-orange-700 transition-colors hover:border-orange-500 hover:bg-orange-50 dark:border-orange-700 dark:bg-slate-900 dark:text-orange-300 dark:hover:bg-slate-800"
+            >
+              ↻ Use result as next input
+            </button>
+          )}
+        </div>
       )}
       {error && (
-        <p className="mt-4 text-sm font-medium text-red-600">{error}</p>
+        <p className="mt-4 text-sm font-medium text-red-600 dark:text-red-400">
+          {error}
+        </p>
       )}
     </section>
   )
