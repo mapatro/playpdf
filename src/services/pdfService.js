@@ -2,7 +2,19 @@
 // Nothing in this module performs network I/O. Files never leave the
 // user's machine.
 
-import { PDFDocument, degrees, rgb } from 'pdf-lib'
+import {
+  PDFDocument,
+  PDFName,
+  degrees,
+  rgb,
+  PDFTextField,
+  PDFCheckBox,
+  PDFRadioGroup,
+  PDFDropdown,
+  PDFOptionList,
+  PDFSignature,
+  PDFButton,
+} from 'pdf-lib'
 import JSZip from 'jszip'
 
 /**
@@ -225,6 +237,223 @@ export async function deletePages(input, indicesToRemove) {
   const pages = await out.copyPages(src, keep)
   pages.forEach((page) => out.addPage(page))
   return out.save()
+}
+
+/**
+ * Inspect a PDF for AcroForm fields. Returns `null` if no AcroForm is
+ * present, otherwise an array of widget records — one per field
+ * appearance on a page (a single named field can appear on multiple
+ * pages, e.g. an initials field).
+ *
+ * Each record:
+ *   { name, type, value, options?, page, x, y, width, height }
+ *
+ * `type` is one of:
+ *   'text' | 'checkbox' | 'radio' | 'dropdown' | 'listbox'
+ *   | 'signature' | 'button'
+ *
+ * x/y/width/height are normalized to [0,1] in the page's TOP-LEFT origin
+ * coordinate space (so the UI can position inputs identically to other
+ * operations like Redact / Sign).
+ *
+ * @param {ArrayBuffer|Uint8Array|Blob|File} input
+ */
+export async function inspectForm(input) {
+  const bytes = await toUint8Array(input)
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+
+  let form
+  try {
+    form = doc.getForm()
+  } catch {
+    return null
+  }
+  const fields = form.getFields()
+  if (!fields || fields.length === 0) return null
+
+  const pages = doc.getPages()
+  const pageIndexByRefTag = new Map()
+  pages.forEach((p, i) => pageIndexByRefTag.set(p.ref.tag, i))
+
+  // Helper: find which page a widget sits on. Tries the widget's P entry
+  // first, falls back to scanning each page's Annots for a matching ref.
+  const findPageIndex = (widget) => {
+    try {
+      const pageRef = widget.dict?.get?.(PDFName.of('P'))
+      if (pageRef && pageRef.tag && pageIndexByRefTag.has(pageRef.tag)) {
+        return pageIndexByRefTag.get(pageRef.tag)
+      }
+    } catch {}
+    for (let i = 0; i < pages.length; i++) {
+      try {
+        const annots = pages[i].node.Annots()
+        if (!annots) continue
+        const arr = annots.asArray ? annots.asArray() : []
+        for (const a of arr) {
+          const resolved = doc.context.lookup(a)
+          if (resolved === widget.dict) return i
+        }
+      } catch {}
+    }
+    return -1
+  }
+
+  const records = []
+  for (const field of fields) {
+    const name = field.getName()
+    const type = inferFieldType(field)
+    const value = readFieldValue(field, type)
+    const options = readFieldOptions(field, type)
+    let widgets = []
+    try {
+      widgets = field.acroField.getWidgets() || []
+    } catch {
+      widgets = []
+    }
+    for (const widget of widgets) {
+      let rect
+      try {
+        rect = widget.getRectangle()
+      } catch {
+        continue
+      }
+      const pageIdx = findPageIndex(widget)
+      if (pageIdx < 0) continue
+      const page = pages[pageIdx]
+      const pw = page.getWidth()
+      const ph = page.getHeight()
+      records.push({
+        name,
+        type,
+        value,
+        options,
+        page: pageIdx,
+        x: rect.x / pw,
+        // Flip Y from PDF bottom-left to UI top-left.
+        y: (ph - rect.y - rect.height) / ph,
+        width: rect.width / pw,
+        height: rect.height / ph,
+      })
+    }
+  }
+  return records
+}
+
+function inferFieldType(field) {
+  if (field instanceof PDFTextField) return 'text'
+  if (field instanceof PDFCheckBox) return 'checkbox'
+  if (field instanceof PDFRadioGroup) return 'radio'
+  if (field instanceof PDFDropdown) return 'dropdown'
+  if (field instanceof PDFOptionList) return 'listbox'
+  if (field instanceof PDFSignature) return 'signature'
+  if (field instanceof PDFButton) return 'button'
+  return 'text'
+}
+
+function readFieldValue(field, type) {
+  try {
+    if (type === 'text') return field.getText() ?? ''
+    if (type === 'checkbox') return field.isChecked()
+    if (type === 'radio') return field.getSelected() ?? null
+    if (type === 'dropdown') return field.getSelected()?.[0] ?? null
+    if (type === 'listbox') return field.getSelected() ?? []
+  } catch {}
+  return null
+}
+
+function readFieldOptions(field, type) {
+  try {
+    if (type === 'radio') return field.getOptions() ?? []
+    if (type === 'dropdown' || type === 'listbox')
+      return field.getOptions() ?? []
+  } catch {}
+  return undefined
+}
+
+/**
+ * Fill AcroForm fields with the given values. `valuesByName` keys are
+ * the field names returned by inspectForm(). For checkboxes a truthy
+ * value checks, falsy unchecks. For radios/dropdowns the value is the
+ * option string to select. For listboxes pass an array.
+ *
+ * If `flatten` is true the fields are flattened after filling — values
+ * become permanent ink and the form is no longer interactive.
+ *
+ * @param {ArrayBuffer|Uint8Array|Blob|File} input
+ * @param {Record<string, any>} valuesByName
+ * @param {{ flatten?: boolean }} [opts]
+ * @returns {Promise<Uint8Array>}
+ */
+export async function fillFormFields(input, valuesByName, opts = {}) {
+  const { flatten = false } = opts
+  if (!valuesByName || typeof valuesByName !== 'object') {
+    throw new Error('fillFormFields requires a values-by-name map.')
+  }
+  const bytes = await toUint8Array(input)
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true })
+  const form = doc.getForm()
+  let filled = 0
+
+  for (const [name, raw] of Object.entries(valuesByName)) {
+    let field
+    try {
+      field = form.getField(name)
+    } catch {
+      continue
+    }
+    if (!field) continue
+    const type = inferFieldType(field)
+
+    try {
+      if (type === 'text') {
+        field.setText(raw == null ? '' : String(raw))
+        filled += 1
+      } else if (type === 'checkbox') {
+        if (raw) field.check()
+        else field.uncheck()
+        filled += 1
+      } else if (type === 'radio') {
+        if (raw != null && raw !== '') {
+          field.select(String(raw))
+          filled += 1
+        }
+      } else if (type === 'dropdown') {
+        if (raw != null && raw !== '') {
+          field.select(String(raw))
+          filled += 1
+        }
+      } else if (type === 'listbox') {
+        if (Array.isArray(raw)) {
+          field.select(raw.map(String))
+          filled += 1
+        } else if (raw != null && raw !== '') {
+          field.select(String(raw))
+          filled += 1
+        }
+      }
+      // signature and button intentionally ignored.
+    } catch (err) {
+      // Skip fields that can't accept the given value (e.g. invalid option).
+      // Keep going so one bad field doesn't fail the whole submission.
+      // eslint-disable-next-line no-console
+      console.warn(`Could not fill field "${name}":`, err?.message)
+    }
+  }
+
+  if (filled === 0) {
+    throw new Error('No form fields were filled.')
+  }
+
+  try {
+    form.updateFieldAppearances()
+  } catch {}
+  if (flatten) {
+    try {
+      form.flatten()
+    } catch {}
+  }
+
+  return doc.save()
 }
 
 /**

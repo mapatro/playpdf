@@ -14,6 +14,8 @@ import {
   imagesToPdf,
   redactPdf,
   signAndFillPdf,
+  inspectForm,
+  fillFormFields,
   downloadBlob,
 } from './services/pdfService.js'
 import {
@@ -217,6 +219,34 @@ export default function App() {
     [runSingle],
   )
 
+  const handleInspectForm = useCallback(
+    (file) => inspectForm(file.buffer ?? file.file),
+    [],
+  )
+
+  const handleFillForm = useCallback(
+    (file, valuesByName, options) =>
+      runSingle(async () => {
+        const bytes = await fillFormFields(
+          file.buffer ?? file.file,
+          valuesByName,
+          options,
+        )
+        const name = `${baseName(file.file.name)}-filled.pdf`
+        downloadBlob(bytes, name)
+        const filledCount = Object.keys(valuesByName).length
+        track('fillForm', {
+          pageCount: file.pageCount,
+          filledCount,
+          flattened: Boolean(options?.flatten),
+        })
+        setMessage(
+          `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. Your download (${name}) should start automatically.`,
+        )
+      }),
+    [runSingle],
+  )
+
   const handleSignAndFill = useCallback(
     (file, placements) =>
       runSingle(async () => {
@@ -340,6 +370,8 @@ export default function App() {
           onPdfToJpg={handlePdfToJpg}
           onRedact={handleRedact}
           onSignAndFill={handleSignAndFill}
+          onInspectForm={handleInspectForm}
+          onFillForm={handleFillForm}
           message={message}
           error={error}
         />

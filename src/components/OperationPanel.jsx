@@ -8,6 +8,7 @@ const OPERATIONS = [
   { id: 'reorder', label: 'Reorder' },
   { id: 'delete', label: 'Delete' },
   { id: 'sign', label: 'Sign & Fill' },
+  { id: 'fill-form', label: 'Fill Form' },
   { id: 'redact', label: 'Redact' },
   { id: 'jpg-to-pdf', label: 'Images → PDF' },
   { id: 'pdf-to-jpg', label: 'PDF → JPG' },
@@ -33,6 +34,8 @@ export default function OperationPanel({
   onPdfToJpg,
   onRedact,
   onSignAndFill,
+  onInspectForm,
+  onFillForm,
   message,
   error,
 }) {
@@ -103,6 +106,7 @@ export default function OperationPanel({
         activeOp === 'delete' ||
         activeOp === 'redact' ||
         activeOp === 'sign' ||
+        activeOp === 'fill-form' ||
         activeOp === 'pdf-to-jpg') && (
         <SingleFileOps
           op={activeOp}
@@ -118,6 +122,8 @@ export default function OperationPanel({
           onDelete={onDelete}
           onRedact={onRedact}
           onSignAndFill={onSignAndFill}
+          onInspectForm={onInspectForm}
+          onFillForm={onFillForm}
           onPdfToJpg={onPdfToJpg}
         />
       )}
@@ -150,6 +156,8 @@ function SingleFileOps({
   onDelete,
   onRedact,
   onSignAndFill,
+  onInspectForm,
+  onFillForm,
   onPdfToJpg,
 }) {
   if (readyFiles.length === 0) {
@@ -235,6 +243,261 @@ function SingleFileOps({
           onSignAndFill={onSignAndFill}
         />
       )}
+      {selectedFile && op === 'fill-form' && (
+        <FillFormPanel
+          key={selectedFile.id}
+          file={selectedFile}
+          busy={busy}
+          onInspectForm={onInspectForm}
+          onFillForm={onFillForm}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Fill Form panel: detects AcroForm fields on the selected PDF and
+ * renders matching HTML inputs positioned over each page thumbnail.
+ * Falls back to a helpful message when the PDF has no real form fields
+ * and points the user at Sign & Fill instead.
+ */
+function FillFormPanel({ file, busy, onInspectForm, onFillForm }) {
+  const { thumbs, loading: thumbsLoading, err: thumbsErr } =
+    useAllThumbnails(file)
+  const [fields, setFields] = useState(null) // null = not loaded; [] = no fields
+  const [inspectErr, setInspectErr] = useState('')
+  const [values, setValues] = useState({}) // {fieldName: value}
+  const [flatten, setFlatten] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setFields(null)
+    setInspectErr('')
+    setValues({})
+    onInspectForm(file)
+      .then((res) => {
+        if (cancelled) return
+        if (!res) {
+          setFields([])
+          return
+        }
+        setFields(res)
+        // Seed values with the fields' existing values so we don't blow
+        // away pre-filled defaults.
+        const seed = {}
+        for (const f of res) {
+          if (seed[f.name] !== undefined) continue
+          if (f.type === 'text' && typeof f.value === 'string')
+            seed[f.name] = f.value
+          else if (f.type === 'checkbox') seed[f.name] = !!f.value
+          else if (f.type === 'radio' || f.type === 'dropdown')
+            seed[f.name] = f.value ?? ''
+          else if (f.type === 'listbox')
+            seed[f.name] = Array.isArray(f.value) ? f.value : []
+        }
+        setValues(seed)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setInspectErr(
+          err?.message || 'Failed to inspect the PDF for form fields.',
+        )
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [file, onInspectForm])
+
+  const setOne = (name, v) =>
+    setValues((prev) => ({ ...prev, [name]: v }))
+
+  const totalFields = fields?.length || 0
+  const apply = () => onFillForm(file, values, { flatten })
+
+  // Group fields by page so we can overlay per-thumbnail.
+  const fieldsByPage = (fields || []).reduce((acc, f) => {
+    ;(acc[f.page] ||= []).push(f)
+    return acc
+  }, {})
+
+  return (
+    <div>
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">
+        Detects AcroForm fields baked into the PDF (tax forms, applications,
+        any PDF made in Acrobat / LibreOffice) and lets you fill them
+        in-place. Recipients opening the file see proper field values, not
+        text stamped on top.
+      </p>
+
+      {fields === null && !inspectErr && (
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          Inspecting form fields…
+        </p>
+      )}
+      {inspectErr && (
+        <p className="text-xs text-red-500 dark:text-red-400">{inspectErr}</p>
+      )}
+
+      {fields !== null && fields.length === 0 && (
+        <div className="rounded border border-orange-200 dark:border-slate-700 bg-orange-50 dark:bg-slate-800 p-3 text-xs text-slate-700 dark:text-slate-300">
+          This PDF has no AcroForm fields — it's a flattened or
+          scan-style PDF. Use the <strong>Sign &amp; Fill</strong> tab
+          instead to stamp text or signatures anywhere on the page.
+        </div>
+      )}
+
+      {fields !== null && fields.length > 0 && (
+        <>
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={apply}
+              className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
+            >
+              {busy
+                ? 'Working…'
+                : `Fill ${totalFields} field${totalFields === 1 ? '' : 's'} & Download`}
+            </button>
+            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={flatten}
+                disabled={busy}
+                onChange={(e) => setFlatten(e.target.checked)}
+              />
+              Flatten (lock values; can't be edited later)
+            </label>
+            <span className="text-[11px] text-slate-400 dark:text-slate-500">
+              Found {totalFields} field{totalFields === 1 ? '' : 's'} across{' '}
+              {Object.keys(fieldsByPage).length} page
+              {Object.keys(fieldsByPage).length === 1 ? '' : 's'}.
+            </span>
+          </div>
+
+          {thumbsLoading && (
+            <p className="text-xs text-slate-400 dark:text-slate-500">
+              Rendering all pages…
+            </p>
+          )}
+          {thumbsErr && (
+            <p className="text-xs text-red-500 dark:text-red-400">{thumbsErr}</p>
+          )}
+
+          {thumbs && (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {thumbs.map((src, i) => (
+                <FormPageThumb
+                  key={i}
+                  src={src}
+                  pageIdx={i}
+                  fields={fieldsByPage[i] || []}
+                  values={values}
+                  busy={busy}
+                  onChange={setOne}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function FormPageThumb({ src, pageIdx, fields, values, busy, onChange }) {
+  return (
+    <figure className="flex flex-col items-center rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 p-2">
+      <div className="relative w-full overflow-hidden">
+        <img
+          src={src}
+          alt={`Page ${pageIdx + 1}`}
+          draggable={false}
+          className="block w-full object-contain shadow-sm"
+        />
+        {fields.map((f, i) => (
+          <FieldOverlay
+            key={`${f.name}-${i}`}
+            field={f}
+            value={values[f.name]}
+            busy={busy}
+            onChange={(v) => onChange(f.name, v)}
+          />
+        ))}
+      </div>
+      <figcaption className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">
+        p{pageIdx + 1} · {fields.length} field{fields.length === 1 ? '' : 's'}
+      </figcaption>
+    </figure>
+  )
+}
+
+function FieldOverlay({ field, value, busy, onChange }) {
+  const style = {
+    left: `${field.x * 100}%`,
+    top: `${field.y * 100}%`,
+    width: `${field.width * 100}%`,
+    height: `${field.height * 100}%`,
+  }
+
+  if (field.type === 'text') {
+    return (
+      <input
+        type="text"
+        value={value ?? ''}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        title={field.name}
+        className="absolute border border-orange-500/70 bg-yellow-50/80 px-1 text-[10px] text-slate-900 outline-none focus:bg-yellow-100"
+        style={style}
+      />
+    )
+  }
+  if (field.type === 'checkbox') {
+    return (
+      <label
+        className="absolute flex items-center justify-center border border-orange-500/70 bg-yellow-50/80"
+        style={style}
+        title={field.name}
+      >
+        <input
+          type="checkbox"
+          checked={!!value}
+          disabled={busy}
+          onChange={(e) => onChange(e.target.checked)}
+          className="m-0 h-3 w-3"
+        />
+      </label>
+    )
+  }
+  if (field.type === 'radio' || field.type === 'dropdown') {
+    return (
+      <select
+        value={value ?? ''}
+        disabled={busy}
+        onChange={(e) => onChange(e.target.value)}
+        title={field.name}
+        className="absolute border border-orange-500/70 bg-yellow-50/80 px-1 text-[10px] text-slate-900"
+        style={style}
+      >
+        <option value="">—</option>
+        {(field.options || []).map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    )
+  }
+  // signature, button, listbox — show a passive label.
+  return (
+    <div
+      title={`${field.name} (${field.type})`}
+      className="absolute flex items-center justify-center border border-slate-400 bg-slate-200/80 text-[9px] text-slate-700"
+      style={style}
+    >
+      {field.type}
     </div>
   )
 }

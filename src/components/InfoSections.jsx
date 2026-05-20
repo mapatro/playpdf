@@ -29,6 +29,10 @@ const OPERATIONS = [
     body: 'Draw your signature with your finger, stylus or mouse and drop it on any page; type free text anywhere to fill printable forms. Perfect for signing contracts and filling tax/school PDFs without uploading them anywhere.',
   },
   {
+    title: 'Fill PDF forms (AcroForm)',
+    body: 'For PDFs with real built-in form fields (tax forms, applications, anything made in Acrobat or LibreOffice), playPDF detects the fields automatically and fills them in-place. Optional flatten locks the values permanently. Recipients see proper field values, not text stamped on top.',
+  },
+  {
     title: 'Redact (black out)',
     body: 'Drag rectangles over sensitive areas to black them out before sharing. Visual redaction first; for irreversible removal of the underlying text, export the redacted PDF as JPG and rebuild it as a new PDF — all client-side, never uploaded.',
   },
