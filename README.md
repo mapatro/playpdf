@@ -1,84 +1,101 @@
 # playPDF
 
-Privacy-first, **100% client-side** PDF tools. Merge, split, rotate and
-reorder PDFs entirely in your browser. Your files are **never uploaded** —
-there is no backend, no account, no paywall.
+**Privacy-first, 100% client-side PDF tools.** Merge, split, rotate,
+reorder, delete pages, sign, redact, and convert PDFs ↔ images —
+entirely in your browser. Your files are **never uploaded** to a
+server. No account, no paywall, no watermark.
 
-## Why it's different
+🔗 Live at **[pdf.patroventure.com](https://pdf.patroventure.com)**
 
-The entire point of this app is privacy. All PDF processing runs in the
-browser using [`pdf-lib`](https://pdfjs.express/) and
-[`pdfjs-dist`](https://mozilla.github.io/pdf.js/). It is a pure static
-site. No file or document content ever leaves your machine. We collect
-only anonymous, bucketed usage counts (e.g. "a merge happened with N
-files").
+## Why playPDF
 
-## Status
+Every other free PDF tool uploads your file to a server. For most
+documents that's fine — but for contracts, IDs, medical records, tax
+forms, or anything confidential, it isn't.
 
-MVP. **Merge** is fully functional end-to-end. **Split / Rotate /
-Reorder** are scaffolded (UI buttons + `pdfService.js` stubs) and marked
-"Coming soon".
+playPDF runs every operation in the browser using JavaScript and
+WebAssembly. There is **no backend** for file content. The privacy
+claim is verifiable because this repo is open source — read the code,
+check the network tab, see for yourself that nothing leaves the
+device.
+
+## What it does
+
+| Operation | What it does |
+|---|---|
+| **Merge** | Combine multiple PDFs into one, in your chosen order. |
+| **Split** | Extract a page range, *or* split every page into separate files. |
+| **Rotate** | Rotate every page at once, or each page individually. |
+| **Reorder** | Drag thumbnails to rearrange pages, then export. |
+| **Delete** | Pick pages to remove from a PDF. |
+| **Sign & Fill** | Draw or type a signature; place it on any page. Type free text anywhere to fill printable forms. Touch / stylus / mouse supported. |
+| **Redact** | Drag rectangles to black out sensitive areas (visual redaction; for irreversible removal use PDF → JPG round-trip). |
+| **Images → PDF** | Combine JPG / PNG images into a single PDF. |
+| **PDF → JPG** | Export each page as a JPG, bundled into a `.zip`. |
+
+Anonymous, aggregate usage counts (e.g. "a merge happened") are
+collected via Cloudflare Web Analytics. **File names and contents are
+never sent.**
 
 ## Tech stack
 
-- Vite + React 18 (JavaScript / JSX, no TypeScript)
-- Tailwind CSS v4 (via the official `@tailwindcss/vite` plugin)
-- `pdf-lib` — PDF manipulation
-- `pdfjs-dist` — page thumbnail rendering (worker is bundled, **no CDN**)
+- **Vite + React 18** (JavaScript / JSX, no TypeScript)
+- **Tailwind CSS v4** with `prefers-color-scheme` dark mode
+- [`pdf-lib`](https://pdf-lib.js.org/) — PDF reading, manipulation, drawing
+- [`pdfjs-dist`](https://mozilla.github.io/pdf.js/) — page thumbnail and JPEG rendering (worker bundled, **no CDN**)
+- [`jszip`](https://stuk.github.io/jszip/) — bundling split outputs and JPG exports
 - Plain React hooks for state, single page (no React Router)
+
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the end-to-end
+dev → deploy diagrams and the runtime/privacy boundary.
 
 ## Local development
 
 ```bash
 npm install
-npm run dev      # http://localhost:5173
-npm run build    # production build into dist/
-npm run preview  # preview the production build locally
-npm run test:merge  # runs the merge logic test
+npm run dev        # http://localhost:5173
+npm run build      # production build → dist/
+npm run preview    # preview the production build locally
+npm test           # run every service test suite
 ```
+
+Individual test suites: `test:merge`, `test:split`, `test:rotate`,
+`test:reorder`, `test:delete`, `test:images`, `test:redact`, `test:sign`.
 
 ## Deployment
 
-Deployed automatically to **GitHub Pages** via the official GitHub Pages
-Actions on every push to `main` (see `.github/workflows/deploy.yml`).
+Deployed automatically to **GitHub Pages** on every push to `main` via
+the official Pages Actions (`.github/workflows/deploy.yml`).
 
-- Vite `base` is `'/'` because the site is served from a custom domain
-  (not a `user.github.io/repo` subpath).
-- `public/CNAME` contains `pdf.patroventure.com` and is emitted into the
-  build so GitHub Pages keeps the custom domain configured.
+- Vite `base` is `'/'` — the site is served from a custom domain.
+- `public/CNAME` pins the custom domain across deploys.
+- `public/robots.txt` and `public/sitemap.xml` are emitted for SEO.
 
 ### Custom domain DNS
 
-In the DNS for `patroventure.com`, add a **CNAME** record:
+In the DNS for `patroventure.com`, a **CNAME** record for the
+subdomain:
 
-| Type  | Name | Value                 |
-| ----- | ---- | --------------------- |
-| CNAME | pdf  | `mapatro.github.io.`  |
+| Type  | Name | Value                |
+| ----- | ---- | -------------------- |
+| CNAME | pdf  | `mapatro.github.io`  |
 
-Then in the GitHub repo: **Settings → Pages**, set the custom domain to
-`pdf.patroventure.com` and enable **Enforce HTTPS**.
-
-## Analytics token TODO
-
-Analytics are abstracted in `src/services/analytics.js`. They are
-**disabled** until configured:
-
-- Replace the `CF_BEACON_TOKEN = 'REPLACE_ME'` placeholder with the real
-  Cloudflare Web Analytics site token.
-- While the placeholder is in place (or in dev), the beacon is **not**
-  injected and `track()` is a `console.debug` no-op.
-- Telemetry is anonymous and bucketed only — never file names or
-  contents.
+Then in **GitHub → Settings → Pages**, the custom domain is set to
+`pdf.patroventure.com` with **Enforce HTTPS** enabled (TLS cert
+provisioned by GitHub via Let's Encrypt).
 
 ## Project layout
 
 ```
-public/            CNAME, favicon
+docs/              ARCHITECTURE.md (dev → deploy diagrams)
+public/            CNAME, favicon, robots.txt, sitemap.xml
 src/
-  components/      FileUpload, PagePreview, OperationPanel, PrivacyFooter
-  services/        pdfService (merge + stubs), pdfRenderService, analytics
-scripts/           test-merge.mjs (merge logic test)
-.github/workflows/ deploy.yml (GitHub Pages)
+  components/      App shell, FileUpload, PagePreview, OperationPanel,
+                   InfoSections (SEO/FAQ content), PrivacyFooter
+  services/        pdfService (all operations), pdfRenderService
+                   (thumbnails + JPEG export), analytics
+scripts/           test-*.mjs — one per operation
+.github/workflows/ deploy.yml
 ```
 
 ## License
