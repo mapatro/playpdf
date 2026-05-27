@@ -614,27 +614,23 @@ export default function App() {
             <a
               href="/"
               aria-label="playPDF — home"
-              className="group flex items-center gap-2 text-xl font-bold tracking-tight"
+              className="flex shrink-0 items-center"
             >
-              {/* Inline SVG logo: orange tile + white document + white
-                  play-triangle. Matches favicon and PWA install icon. */}
-              <svg
-                viewBox="0 0 32 32"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-hidden="true"
-                className="h-7 w-7 shrink-0 transition-transform group-hover:-rotate-3"
-              >
-                <rect width="32" height="32" rx="7" fill="#ea580c" />
-                <path
-                  d="M9.5 7h7.5l4.5 4.5V24a1.75 1.75 0 0 1-1.75 1.75H9.5A1.75 1.75 0 0 1 7.75 24V8.75A1.75 1.75 0 0 1 9.5 7Z"
-                  fill="#ffffff"
-                />
-                <path d="M17 7v4.5h4.5L17 7Z" fill="#fed7aa" />
-                <path d="M12.5 13.5v6l5.25-3-5.25-3Z" fill="#ea580c" />
-              </svg>
-              <span className="text-slate-900 dark:text-slate-50">
-                play<span className="text-orange-600 dark:text-orange-400">PDF</span>
-              </span>
+              {/* Header logo — the user's dark-pill brand mark. Works
+                  as a "branded chip" on light backgrounds and blends
+                  on dark. Built by `npm run gen:logo` from the source
+                  PNG. The PWA install icon is a separately-designed
+                  clean SVG mark (see scripts/gen-pwa-icons.mjs);
+                  common to ship a different in-app wordmark vs OS
+                  app icon since they have different size/shape needs. */}
+              <img
+                src="/playpdf-logo.png"
+                alt="playPDF"
+                width="1120"
+                height="300"
+                className="block h-8 w-auto"
+                draggable={false}
+              />
             </a>
             {/* Value prop, always on screen so it stays visible even
                 when we hide the per-workspace heading. Three bold
