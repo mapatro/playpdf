@@ -488,10 +488,26 @@ export async function signAndFillPdf(input, placements) {
     }
     if (!Array.isArray(items) || items.length === 0) continue
     const page = pages[idx]
-    const w = page.getWidth()
-    const h = page.getHeight()
+    // mbW/mbH are the unrotated MediaBox dimensions — what pdf-lib's
+    // drawText/drawImage operate in. dispW/dispH are what the viewer
+    // shows after applying the page's Rotate parameter — what the
+    // workspace clicks are normalized to.
+    const mbW = page.getWidth()
+    const mbH = page.getHeight()
+    const rotation = ((page.getRotation().angle % 360) + 360) % 360
+    const portraitFlip = rotation === 90 || rotation === 270
+    const dispW = portraitFlip ? mbH : mbW
+    const dispH = portraitFlip ? mbW : mbH
 
     for (const item of items) {
+      // Normalized [0,1] coords from the workspace are in DISPLAYED
+      // (viewer-rotated) page space, top-left origin. Convert to the
+      // viewer's bottom-left "display" coords first…
+      const nx = clamp01(item.x)
+      const ny = clamp01(item.y)
+      const xDisp = nx * dispW
+      const yDispFromTopAnchor = ny * dispH // top of the placement
+
       if (item.kind === 'sig') {
         if (!(item.png instanceof Uint8Array)) {
           throw new Error('Signature item is missing PNG bytes.')
@@ -502,26 +518,55 @@ export async function signAndFillPdf(input, placements) {
           sigCache.set(item.png, embedded)
         }
         const aspect = embedded.width / embedded.height
-        const sigW = clamp01(item.width) * w
+        const sigW = clamp01(item.width) * dispW
         const sigH = sigW / aspect
+        // The image's anchor in pdf-lib's drawImage is its bottom-left
+        // corner. In display coords, that means y_from_bottom of the
+        // top edge minus the image height.
+        const yDispBL = dispH - yDispFromTopAnchor - sigH
+        const draw = displayToMediaBox(
+          xDisp,
+          yDispBL,
+          sigW,
+          sigH,
+          rotation,
+          mbW,
+          mbH,
+        )
         page.drawImage(embedded, {
-          x: clamp01(item.x) * w,
-          y: h - clamp01(item.y) * h - sigH,
+          x: draw.x,
+          y: draw.y,
           width: sigW,
           height: sigH,
+          rotate: degrees(rotation),
         })
         total += 1
       } else if (item.kind === 'text') {
         const fontSize = Number(item.fontSize) || 12
         const text = String(item.text ?? '')
         if (!text) continue
+        // pdf-lib's drawText anchor is the BASELINE (bottom-left of
+        // the glyph baseline). Place the baseline one fontSize below
+        // the placement's top edge in display coords.
+        const yDispBaseline = dispH - yDispFromTopAnchor - fontSize
+        // For the baseline anchor we pass zero "box" dimensions —
+        // displayToMediaBox only needs them for the rotated image-
+        // corner translation, not for text.
+        const draw = displayToMediaBox(
+          xDisp,
+          yDispBaseline,
+          0,
+          0,
+          rotation,
+          mbW,
+          mbH,
+        )
         page.drawText(text, {
-          x: clamp01(item.x) * w,
-          // pdf-lib text uses baseline at y; we anchor at top-left, so
-          // shift down by one font size.
-          y: h - clamp01(item.y) * h - fontSize,
+          x: draw.x,
+          y: draw.y,
           size: fontSize,
           color: rgb(0, 0, 0),
+          rotate: degrees(rotation),
         })
         total += 1
       } else {
@@ -532,6 +577,59 @@ export async function signAndFillPdf(input, placements) {
 
   if (total === 0) throw new Error('No signature or text placements given.')
   return doc.save()
+}
+
+/**
+ * Convert a display-space anchor point (bottom-left of the placement,
+ * y from bottom) to the MediaBox-space anchor that pdf-lib needs so
+ * the rendered glyph/image lands at that display position after the
+ * viewer applies the page's Rotate parameter.
+ *
+ * For rotated pages, drawing a text/image at MediaBox(x,y) without
+ * matching the rotation makes it appear at the wrong spot AND
+ * sideways. Callers MUST also pass `rotate: degrees(rotation)` to
+ * drawText / drawImage to spin the glyph back upright.
+ *
+ * boxW/boxH are the placement's width/height in display coords; they
+ * matter for image rotation pivot — for text (point anchor) pass 0/0.
+ */
+function displayToMediaBox(xD, yD, boxW, boxH, rotation, mbW, mbH) {
+  // The transform is the rotation matrix applied to the bottom-left
+  // anchor, plus a translation that compensates for where the rotated
+  // bounding box would otherwise land outside the page.
+  switch (rotation) {
+    case 0:
+      return { x: xD, y: yD }
+    case 90:
+      // Display = MediaBox rotated 90° CW. After we apply rotate:90 to
+      // a horizontal element, its bottom-left in MB lands at where its
+      // ORIGINAL bottom-left should be when the page is shown. From
+      // experimentation: place the anchor at (mbW - yD - boxH? no —
+      // for a rotated text/image, pdf-lib's `rotate` spins around the
+      // (x,y) anchor itself, so we just remap the anchor.)
+      // After rotate:90 CW about anchor, the element extends LEFT and
+      // UP in MB space. We want it to end up at display (xD, yD) with
+      // boxW going right and boxH going up in DISPLAY. So:
+      //   anchor_MB.x = mbW - yD
+      //   anchor_MB.y = xD
+      return { x: mbW - yD, y: xD }
+    case 180:
+      // Page flipped. After rotate:180 around anchor, element extends
+      // LEFT and DOWN. Anchor should be at the OPPOSITE corner.
+      return { x: mbW - xD, y: mbH - yD }
+    case 270:
+      // Most common rotated-PDF case (lots of forms are saved as
+      // landscape pages with Rotate:270 so they display as portrait).
+      // After rotate:270 about anchor, element extends RIGHT and DOWN
+      // in MB. We want the visible bottom-left in display = (xD, yD).
+      //   anchor_MB.x = yD
+      //   anchor_MB.y = mbH - xD
+      return { x: yD, y: mbH - xD }
+    default:
+      // Non-multiple-of-90 rotations are very rare; treat as 0 and
+      // accept the offset rather than crashing.
+      return { x: xD, y: yD }
+  }
 }
 
 /**

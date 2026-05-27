@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { renderThumbnails } from '../services/pdfRenderService.js'
 import { ActiveOpHeading } from './Sidebar.jsx'
+import SignatureCanvas from './SignatureCanvas.jsx'
 
 /**
  * Workspace panel for the currently active operation. The tool selector
@@ -23,6 +24,7 @@ export default function OperationPanel({
   onSignAndFill,
   onInspectForm,
   onFillForm,
+  onSelectOp,
   message,
   error,
   lastResult,
@@ -95,6 +97,7 @@ export default function OperationPanel({
           onSignAndFill={onSignAndFill}
           onInspectForm={onInspectForm}
           onFillForm={onFillForm}
+          onSelectOp={onSelectOp}
           onPdfToJpg={onPdfToJpg}
         />
       )}
@@ -144,6 +147,7 @@ function SingleFileOps({
   onSignAndFill,
   onInspectForm,
   onFillForm,
+  onSelectOp,
   onPdfToJpg,
 }) {
   if (readyFiles.length === 0) {
@@ -227,6 +231,8 @@ function SingleFileOps({
           file={selectedFile}
           busy={busy}
           onSignAndFill={onSignAndFill}
+          onInspectForm={onInspectForm}
+          onSelectOp={onSelectOp}
         />
       )}
       {selectedFile && op === 'fill-form' && (
@@ -236,6 +242,7 @@ function SingleFileOps({
           busy={busy}
           onInspectForm={onInspectForm}
           onFillForm={onFillForm}
+          onSelectOp={onSelectOp}
         />
       )}
     </div>
@@ -248,7 +255,7 @@ function SingleFileOps({
  * Falls back to a helpful message when the PDF has no real form fields
  * and points the user at Sign & Fill instead.
  */
-function FillFormPanel({ file, busy, onInspectForm, onFillForm }) {
+function FillFormPanel({ file, busy, onInspectForm, onFillForm, onSelectOp }) {
   const { thumbs, loading: thumbsLoading, err: thumbsErr } =
     useAllThumbnails(file)
   const [fields, setFields] = useState(null) // null = not loaded; [] = no fields
@@ -327,9 +334,22 @@ function FillFormPanel({ file, busy, onInspectForm, onFillForm }) {
 
       {fields !== null && fields.length === 0 && (
         <div className="rounded border border-orange-200 dark:border-slate-700 bg-orange-50 dark:bg-slate-800 p-3 text-xs text-slate-700 dark:text-slate-300">
-          This PDF has no AcroForm fields — it's a flattened or
-          scan-style PDF. Use the <strong>Sign &amp; Fill</strong> tab
-          instead to stamp text or signatures anywhere on the page.
+          <p className="mb-3">
+            This PDF has no built-in form fields — it's a flattened,
+            word-processor-exported or scan-style PDF. Use{' '}
+            <strong>Sign &amp; Fill</strong> to type or sign anywhere on
+            the page instead.
+          </p>
+          {onSelectOp && (
+            <button
+              type="button"
+              onClick={() => onSelectOp('sign')}
+              disabled={busy}
+              className="rounded-md bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:opacity-60"
+            >
+              ✍️ Switch to Sign &amp; Fill
+            </button>
+          )}
         </div>
       )}
 
@@ -344,7 +364,7 @@ function FillFormPanel({ file, busy, onInspectForm, onFillForm }) {
             >
               {busy
                 ? 'Working…'
-                : `Fill ${totalFields} field${totalFields === 1 ? '' : 's'} & Download`}
+                : `Fill ${totalFields} field${totalFields === 1 ? '' : 's'} & ${file.fileHandle ? 'Save' : 'Download'}`}
             </button>
             <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300">
               <input
@@ -493,118 +513,35 @@ function FieldOverlay({ field, value, busy, onChange }) {
 // any page thumbnail to place the current tool. Everything lives in
 // normalized [0,1] page coords (top-left origin) so the PDF service can
 // stay UI-agnostic.
+//
+// NOTE: This panel is unreachable when a file is loaded — App.jsx mounts
+// SignAndFillWorkspace (full-size pages) instead. Kept as a fallback for
+// future no-file scenarios.
 
-function SignatureCanvas({ disabled, onSave }) {
-  const canvasRef = useRef(null)
-  const drawing = useRef(false)
-  const last = useRef(null)
-  const [hasInk, setHasInk] = useState(false)
-
-  const getCtx = () => canvasRef.current?.getContext('2d')
-
-  const pointAt = (e) => {
-    const canvas = canvasRef.current
-    if (!canvas) return null
-    const rect = canvas.getBoundingClientRect()
-    // Canvas is 400x150 internally; CSS may scale it. Map screen→canvas.
-    const sx = canvas.width / rect.width
-    const sy = canvas.height / rect.height
-    return {
-      x: (e.clientX - rect.left) * sx,
-      y: (e.clientY - rect.top) * sy,
-    }
-  }
-
-  const onPointerDown = (e) => {
-    if (disabled) return
-    e.preventDefault()
-    canvasRef.current?.setPointerCapture?.(e.pointerId)
-    drawing.current = true
-    last.current = pointAt(e)
-    setHasInk(true)
-  }
-  const onPointerMove = (e) => {
-    if (!drawing.current) return
-    const ctx = getCtx()
-    if (!ctx) return
-    const p = pointAt(e)
-    if (!p || !last.current) return
-    ctx.lineWidth = 2.5
-    ctx.lineCap = 'round'
-    ctx.strokeStyle = '#0f172a'
-    ctx.beginPath()
-    ctx.moveTo(last.current.x, last.current.y)
-    ctx.lineTo(p.x, p.y)
-    ctx.stroke()
-    last.current = p
-  }
-  const onPointerUp = () => {
-    drawing.current = false
-    last.current = null
-  }
-
-  const clear = () => {
-    const ctx = getCtx()
-    if (!ctx || !canvasRef.current) return
-    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height)
-    setHasInk(false)
-  }
-
-  const save = async () => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const blob = await new Promise((resolve, reject) =>
-      canvas.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error('Canvas blob failed'))),
-        'image/png',
-      ),
-    )
-    const bytes = new Uint8Array(await blob.arrayBuffer())
-    const dataUrl = URL.createObjectURL(blob)
-    onSave({ bytes, dataUrl })
-  }
-
-  return (
-    <div>
-      <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">
-        Draw your signature below (touch, stylus, or mouse).
-      </p>
-      <canvas
-        ref={canvasRef}
-        width={400}
-        height={150}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerLeave={onPointerUp}
-        className="block w-full max-w-md rounded border border-slate-300 dark:border-slate-600 bg-white touch-none"
-        style={{ touchAction: 'none' }}
-      />
-      <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          disabled={disabled || !hasInk}
-          onClick={save}
-          className="rounded-lg bg-orange-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
-        >
-          Use this signature
-        </button>
-        <button
-          type="button"
-          disabled={disabled || !hasInk}
-          onClick={clear}
-          className="rounded border border-slate-300 dark:border-slate-600 px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 hover:border-slate-400 dark:hover:border-slate-500 disabled:opacity-60"
-        >
-          Clear
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function SignAndFillPanel({ file, busy, onSignAndFill }) {
+function SignAndFillPanel({
+  file,
+  busy,
+  onSignAndFill,
+  onInspectForm,
+  onSelectOp,
+}) {
   const { thumbs, loading, err } = useAllThumbnails(file)
   const [tool, setTool] = useState('sig') // 'sig' | 'text'
+  // If the PDF actually has AcroForm fields, nudge the user toward
+  // Fill Form (which fills proper fields instead of stamping overlays).
+  const [formFieldCount, setFormFieldCount] = useState(null)
+  useEffect(() => {
+    if (!onInspectForm) return
+    let cancelled = false
+    onInspectForm(file)
+      .then((res) => {
+        if (!cancelled && Array.isArray(res)) setFormFieldCount(res.length)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [file, onInspectForm])
   const [signature, setSignature] = useState(null) // { bytes, dataUrl }
   const [sigWidthPct, setSigWidthPct] = useState(25) // % of page width
   const [text, setText] = useState('')
@@ -671,6 +608,25 @@ function SignAndFillPanel({ file, busy, onSignAndFill }) {
         type free text, then click a page thumbnail to drop it where you
         want it. Click any placed item to remove.
       </p>
+
+      {formFieldCount > 0 && onSelectOp && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+          <span>
+            💡 This PDF has <strong>{formFieldCount}</strong> built-in
+            form field{formFieldCount === 1 ? '' : 's'} — <strong>Fill Form</strong>{' '}
+            will fill them properly so recipients see real field values
+            (not text stamped on top).
+          </span>
+          <button
+            type="button"
+            onClick={() => onSelectOp('fill-form')}
+            disabled={busy}
+            className="ml-auto rounded-md bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+          >
+            📋 Switch to Fill Form
+          </button>
+        </div>
+      )}
 
       {/* Tool toggle */}
       <div
@@ -808,7 +764,7 @@ function SignAndFillPanel({ file, busy, onSignAndFill }) {
             ? 'Working…'
             : totalPlacements === 0
               ? 'Click a page to place'
-              : `Apply ${totalPlacements} item${totalPlacements === 1 ? '' : 's'} & Download`}
+              : `Apply ${totalPlacements} item${totalPlacements === 1 ? '' : 's'} & ${file.fileHandle ? 'Save' : 'Download'}`}
         </button>
         <button
           type="button"
@@ -1006,7 +962,7 @@ function RedactPanel({ file, busy, onRedact }) {
             ? 'Working…'
             : totalRects === 0
               ? 'Mark areas to redact'
-              : `Apply ${totalRects} redaction${totalRects === 1 ? '' : 's'} & Download`}
+              : `Apply ${totalRects} redaction${totalRects === 1 ? '' : 's'} & ${file.fileHandle ? 'Save' : 'Download'}`}
         </button>
         <button
           type="button"
@@ -1386,7 +1342,7 @@ function DeletePanel({ file, busy, onDelete }) {
             ? 'Working…'
             : count === 0
               ? 'Pick pages to delete'
-              : `Delete ${count} page${count === 1 ? '' : 's'} & Download`}
+              : `Delete ${count} page${count === 1 ? '' : 's'} & ${file.fileHandle ? 'Save' : 'Download'}`}
         </button>
         <button
           type="button"
@@ -1675,7 +1631,7 @@ function RotatePanel({ file, busy, onRotate }) {
           onClick={apply}
           className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
         >
-          {busy ? 'Working…' : 'Apply & Download'}
+          {busy ? 'Working…' : `Apply & ${file.fileHandle ? 'Save' : 'Download'}`}
         </button>
       </div>
 
@@ -1752,7 +1708,7 @@ function ReorderPanel({ file, busy, onReorder }) {
           onClick={() => onReorder(file, order)}
           className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-medium text-white transition-colors hover:bg-orange-700 disabled:cursor-not-allowed disabled:bg-orange-200"
         >
-          {busy ? 'Working…' : 'Apply & Download'}
+          {busy ? 'Working…' : `Apply & ${file.fileHandle ? 'Save' : 'Download'}`}
         </button>
         <button
           type="button"

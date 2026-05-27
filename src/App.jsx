@@ -1,10 +1,12 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import FileUpload from './components/FileUpload.jsx'
 import PagePreview from './components/PagePreview.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 import PrivacyFooter from './components/PrivacyFooter.jsx'
 import InfoSections from './components/InfoSections.jsx'
 import Sidebar from './components/Sidebar.jsx'
+import FillFormWorkspace from './components/FillFormWorkspace.jsx'
+import SignAndFillWorkspace from './components/SignAndFillWorkspace.jsx'
 import {
   mergePdfs,
   splitPdfRange,
@@ -20,6 +22,12 @@ import {
   downloadBlob,
 } from './services/pdfService.js'
 import {
+  saveOrDownload,
+  saveAsPdf,
+  openPdfFiles,
+  isFileSystemAccessSupported,
+} from './services/fileAccess.js'
+import {
   renderThumbnails,
   renderPagesAsJpeg,
 } from './services/pdfRenderService.js'
@@ -32,7 +40,10 @@ const nextId = () => `f${++idCounter}`
 const baseName = (name) => name.replace(/\.pdf$/i, '')
 
 export default function App() {
-  // Each entry: { id, file, status, thumbnails, pageCount, buffer }
+  // Each entry: { id, file, fileHandle, status, thumbnails, pageCount, buffer }
+  // fileHandle is a FileSystemFileHandle when the user opened the file via
+  // showOpenFilePicker (Chromium), null otherwise. When present, ops save
+  // back to the same file instead of triggering a download.
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
@@ -45,9 +56,15 @@ export default function App() {
   const [lastResult, setLastResult] = useState(null)
 
   const addFiles = useCallback(async (incoming) => {
-    const entries = incoming.map((file) => ({
+    // FileUpload always hands us [{ file, fileHandle? }]. Be lenient and
+    // accept bare File objects too in case any other caller predates that.
+    const records = incoming.map((r) =>
+      r instanceof File ? { file: r, fileHandle: null } : r,
+    )
+    const entries = records.map(({ file, fileHandle }) => ({
       id: nextId(),
       file,
+      fileHandle: fileHandle ?? null,
       status: 'rendering',
       thumbnails: [],
       pageCount: undefined,
@@ -142,6 +159,51 @@ export default function App() {
     }
   }, [])
 
+  // Save bytes back to the file's handle (if any) or trigger a download.
+  // On in-place save, also refresh the workspace entry so its buffer /
+  // thumbnails / pageCount mirror what's now on disk; the lastResult
+  // chain pointer is suppressed because the file IS the result.
+  // On download, behave like today — leave the workspace untouched and
+  // expose lastResult so the user can chain.
+  const saveOpResult = useCallback(
+    async (file, bytes, fallbackName) => {
+      const { savedInPlace } = await saveOrDownload({
+        fileHandle: file.fileHandle,
+        bytes,
+        fallbackName,
+      })
+      if (savedInPlace) {
+        const newFile = new File([bytes], file.file.name, {
+          type: 'application/pdf',
+        })
+        const { pageCount, thumbnails } = await renderThumbnails(bytes, {
+          maxPages: 1,
+        })
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === file.id
+              ? {
+                  ...f,
+                  file: newFile,
+                  buffer: bytes,
+                  pageCount,
+                  thumbnails,
+                  status: 'ready',
+                }
+              : f,
+          ),
+        )
+      }
+      return {
+        savedInPlace,
+        suffix: savedInPlace
+          ? `Saved to ${file.file.name}.`
+          : `Your download (${fallbackName}) should start automatically.`,
+      }
+    },
+    [],
+  )
+
   const useResultAsInput = useCallback(async () => {
     if (!lastResult) return
     setBusy(true)
@@ -153,12 +215,16 @@ export default function App() {
         maxPages: 1,
       })
       if (kind === 'replace' && targetFileId) {
+        // Drop any fileHandle: the result's filename diverges from the
+        // original on disk, and we don't want the next op to silently
+        // overwrite the original. Chained ops download as new files.
         setFiles((prev) =>
           prev.map((f) =>
             f.id === targetFileId
               ? {
                   ...f,
                   file: fileObj,
+                  fileHandle: null,
                   buffer: bytes,
                   status: 'ready',
                   thumbnails,
@@ -173,6 +239,7 @@ export default function App() {
         const newEntry = {
           id: nextId(),
           file: fileObj,
+          fileHandle: null,
           status: 'ready',
           thumbnails,
           pageCount,
@@ -198,14 +265,13 @@ export default function App() {
       runSingle(async () => {
         const bytes = await splitPdfRange(file.buffer ?? file.file, from, to)
         const name = `${baseName(file.file.name)}-pages-${from}-${to}.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         track('split', { pageCount: file.pageCount, mode: 'range' })
-        setMessage(
-          `Extracted pages ${from}–${to}. Your download (${name}) should start automatically.`,
-        )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        setMessage(`Extracted pages ${from}–${to}. ${suffix}`)
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleSplitAll = useCallback(
@@ -227,17 +293,16 @@ export default function App() {
       runSingle(async () => {
         const bytes = await rotatePdf(file.buffer ?? file.file, { rotations })
         const name = `${baseName(file.file.name)}-rotated.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         track('rotate', {
           pageCount: file.pageCount,
           mode: 'per-page',
         })
-        setMessage(
-          `Rotated PDF. Your download (${name}) should start automatically.`,
-        )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        setMessage(`Rotated PDF. ${suffix}`)
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleReorder = useCallback(
@@ -245,14 +310,13 @@ export default function App() {
       runSingle(async () => {
         const bytes = await reorderPages(file.buffer ?? file.file, order)
         const name = `${baseName(file.file.name)}-reordered.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         track('reorder', { pageCount: file.pageCount, mode: 'manual' })
-        setMessage(
-          `Reordered pages. Your download (${name}) should start automatically.`,
-        )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        setMessage(`Reordered pages. ${suffix}`)
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleDelete = useCallback(
@@ -260,17 +324,18 @@ export default function App() {
       runSingle(async () => {
         const bytes = await deletePages(file.buffer ?? file.file, indices)
         const name = `${baseName(file.file.name)}-trimmed.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         track('delete', {
           pageCount: file.pageCount,
           removed: indices.length,
         })
         setMessage(
-          `Deleted ${indices.length} page${indices.length === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+          `Deleted ${indices.length} page${indices.length === 1 ? '' : 's'}. ${suffix}`,
         )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleImagesToPdf = useCallback(
@@ -302,7 +367,7 @@ export default function App() {
           options,
         )
         const name = `${baseName(file.file.name)}-filled.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         const filledCount = Object.keys(valuesByName).length
         track('fillForm', {
           pageCount: file.pageCount,
@@ -310,11 +375,12 @@ export default function App() {
           flattened: Boolean(options?.flatten),
         })
         setMessage(
-          `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. Your download (${name}) should start automatically.`,
+          `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. ${suffix}`,
         )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleSignAndFill = useCallback(
@@ -325,7 +391,7 @@ export default function App() {
           placements,
         )
         const name = `${baseName(file.file.name)}-signed.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         const total = Object.values(placements).reduce(
           (s, items) => s + items.length,
           0,
@@ -335,11 +401,12 @@ export default function App() {
           placements: total,
         })
         setMessage(
-          `Added ${total} signature/text item${total === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+          `Added ${total} signature/text item${total === 1 ? '' : 's'}. ${suffix}`,
         )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handleRedact = useCallback(
@@ -350,7 +417,7 @@ export default function App() {
           rectsByPage,
         )
         const name = `${baseName(file.file.name)}-redacted.pdf`
-        downloadBlob(bytes, name)
+        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         const totalRects = Object.values(rectsByPage).reduce(
           (s, r) => s + r.length,
           0,
@@ -360,11 +427,12 @@ export default function App() {
           rectCount: totalRects,
         })
         setMessage(
-          `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. Your download (${name}) should start automatically.`,
+          `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. ${suffix}`,
         )
-        setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+        if (!savedInPlace)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle],
+    [runSingle, saveOpResult],
   )
 
   const handlePdfToJpg = useCallback(
@@ -383,6 +451,143 @@ export default function App() {
       }),
     [runSingle],
   )
+
+  // Called by FillFormWorkspace when the user clicks Save. Writes to
+  // the file handle if present, else downloads a -filled.pdf copy.
+  // Updates file.buffer so chained ops see the new bytes; skips
+  // thumbnail refresh for speed (a stale tiny thumbnail is OK).
+  const handleFillFormSave = useCallback(async (file, bytes, options) => {
+    const name = `${baseName(file.file.name)}-filled.pdf`
+    await saveOrDownload({
+      fileHandle: file.fileHandle,
+      bytes,
+      fallbackName: name,
+    })
+    setFiles((prev) =>
+      prev.map((f) => {
+        if (f.id !== file.id) return f
+        const newFile = new File([bytes], f.file.name, {
+          type: 'application/pdf',
+        })
+        return { ...f, file: newFile, buffer: bytes }
+      }),
+    )
+    if (options?.flatten) {
+      // Flatten is a notable user action — track once.
+      track('fillForm', {
+        pageCount: file.pageCount,
+        filledCount: 0,
+        flattened: true,
+      })
+    }
+  }, [])
+
+  // Same shape as handleFillFormSave but for Sign & Fill.
+  const handleSignAndFillSave = useCallback(async (file, bytes) => {
+    const name = `${baseName(file.file.name)}-signed.pdf`
+    await saveOrDownload({
+      fileHandle: file.fileHandle,
+      bytes,
+      fallbackName: name,
+    })
+    setFiles((prev) =>
+      prev.map((f) => {
+        if (f.id !== file.id) return f
+        const newFile = new File([bytes], f.file.name, {
+          type: 'application/pdf',
+        })
+        return { ...f, file: newFile, buffer: bytes }
+      }),
+    )
+  }, [])
+
+  // Hidden <input> for "Open another" on browsers without the File
+  // System Access API. Lives at App scope so the inline workspace
+  // toolbars don't each need their own fallback input.
+  const openAnotherInputRef = useRef(null)
+
+  // "Open another" — used by the inline workspace toolbar so the user
+  // can swap to a different PDF without leaving the editor view.
+  // Returns an array of { file, fileHandle } the caller can pass to
+  // addFiles. Empty array on cancel.
+  const openAnotherPdf = useCallback(async () => {
+    if (isFileSystemAccessSupported()) {
+      try {
+        return await openPdfFiles({ multiple: true })
+      } catch (err) {
+        if (err?.name !== 'AbortError') console.warn(err)
+        return []
+      }
+    }
+    // Fallback: trigger the hidden <input>. We hand the result back via
+    // its onChange handler, which calls a captured resolve(). This lets
+    // the workspace `await` the picker on non-Chromium browsers too.
+    return await new Promise((resolve) => {
+      const input = openAnotherInputRef.current
+      if (!input) return resolve([])
+      const handler = (e) => {
+        input.removeEventListener('change', handler)
+        const list = Array.from(e.target.files || []).filter(
+          (f) =>
+            f.type === 'application/pdf' || /\.pdf$/i.test(f.name),
+        )
+        e.target.value = ''
+        resolve(list.map((file) => ({ file, fileHandle: null })))
+      }
+      input.addEventListener('change', handler)
+      input.click()
+    })
+  }, [])
+
+  // "Save As" for either workspace: ask the user where to write a new
+  // file. On success, swap the workspace's file entry to the new handle
+  // so subsequent Saves go there (matching Word's behavior). On
+  // AbortError (user cancelled the picker) do nothing.
+  const handleSaveAs = useCallback(async (file, bytes, opts = {}) => {
+    const suggested =
+      opts.suggestedName || `${baseName(file.file.name)}-edited.pdf`
+    try {
+      const { fileHandle: newHandle } = await saveAsPdf({
+        bytes,
+        suggestedName: suggested,
+      })
+      // If the browser doesn't support showSaveFilePicker, saveAsPdf
+      // downloads and returns a null handle — leave the workspace's
+      // file entry alone in that case (handle and name stay as they
+      // were).
+      if (!newHandle) return { savedInPlace: false }
+      const newName =
+        typeof newHandle.name === 'string' && newHandle.name
+          ? newHandle.name
+          : suggested
+      const newFile = new File([bytes], newName, { type: 'application/pdf' })
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === file.id
+            ? {
+                ...f,
+                file: newFile,
+                fileHandle: newHandle,
+                buffer: bytes,
+              }
+            : f,
+        ),
+      )
+      return { savedInPlace: true }
+    } catch (err) {
+      if (err?.name === 'AbortError') return { savedInPlace: false, cancelled: true }
+      throw err
+    }
+  }, [])
+
+  // Pick the file each workspace operates on. Multi-file workflows go
+  // through the OperationPanel selector; workspaces just grab the first
+  // ready file for now.
+  const readyFiles = files.filter((f) => f.status === 'ready')
+  const inFillFormMode = activeOp === 'fill-form' && readyFiles.length > 0
+  const fillFormFile = inFillFormMode ? readyFiles[0] : null
+  const inSignAndFillMode = activeOp === 'sign' && readyFiles.length > 0
+  const signAndFillFile = inSignAndFillMode ? readyFiles[0] : null
 
   return (
     <div className="flex min-h-full flex-col bg-orange-50/40 dark:bg-slate-950">
@@ -407,6 +612,12 @@ export default function App() {
             >
               <span aria-hidden="true">📄</span> playPDF
             </a>
+            {/* Always-visible tagline so the value prop stays on screen
+                even when we hide the per-workspace heading to give the
+                PDF more room. */}
+            <span className="hidden border-l border-slate-200 pl-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 sm:inline">
+              Free, private PDF editor · files never leave your device
+            </span>
           </div>
           <a
             href="https://patroventure.com"
@@ -417,8 +628,10 @@ export default function App() {
         </nav>
       </header>
 
-      {/* Editor body: sidebar + main workspace */}
-      <div className="relative mx-auto flex w-full max-w-7xl flex-1">
+      {/* Editor body: sidebar + main workspace. Full window width — the
+          PDF needs the room, and capping it at max-w-7xl just adds
+          visual whitespace people read as "the editor is small". */}
+      <div className="relative flex w-full flex-1">
         {/* Sidebar — persistent on md+, drawer on mobile */}
         <aside
           aria-label="Tools"
@@ -444,31 +657,88 @@ export default function App() {
           />
         )}
 
-        {/* Main workspace */}
-        <main className="min-w-0 flex-1 px-4 py-6 sm:py-8 md:px-8">
-          <header className="mb-6">
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
-              Free, private PDF editor
-            </h1>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              Pick a tool from the sidebar. All processing happens in
-              your browser — files never leave your device.
-            </p>
-          </header>
-
-          {/* Persistent PDF upload + preview (hidden when the active op
-              brings its own input — e.g. Images → PDF). */}
-          {activeOp !== 'jpg-to-pdf' && (
-            <>
-              <FileUpload
-                files={files}
-                onAddFiles={addFiles}
-                onRemoveFile={removeFile}
-              />
-              <PagePreview files={files} />
-            </>
+        {/* Main workspace. Compact padding when a full-page workspace
+            is active so the PDF gets the room — wider padding when
+            browsing tools / picking a file. */}
+        <main
+          className={`min-w-0 flex-1 px-4 md:px-8 ${
+            inFillFormMode || inSignAndFillMode
+              ? 'py-3'
+              : 'py-6 sm:py-8'
+          }`}
+        >
+          {/* Heading only when we're NOT in a focused workspace — the
+              tagline lives in the top nav permanently, so removing this
+              here just reclaims vertical space without losing the
+              messaging. */}
+          {!inFillFormMode && !inSignAndFillMode && (
+            <header className="mb-6">
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-3xl">
+                Free, private PDF editor
+              </h1>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                Pick a tool from the sidebar. All processing happens in
+                your browser — files never leave your device.
+              </p>
+            </header>
           )}
 
+          {/* Persistent PDF upload — hidden when the active op brings
+              its own input (Images → PDF) or owns a full-page workspace
+              (Fill Form, Sign & Fill — those render file info inline in
+              their own toolbar). Preview thumbnails are also hidden
+              when a workspace owns full-size page rendering. */}
+          {activeOp !== 'jpg-to-pdf' &&
+            !inFillFormMode &&
+            !inSignAndFillMode && (
+              <>
+                <FileUpload
+                  files={files}
+                  onAddFiles={addFiles}
+                  onRemoveFile={removeFile}
+                />
+                <PagePreview files={files} />
+              </>
+            )}
+
+          {inFillFormMode ? (
+            <FillFormWorkspace
+              key={fillFormFile.id}
+              file={fillFormFile}
+              busy={busy}
+              onSelectOp={selectOp}
+              onSaved={handleFillFormSave}
+              onSaveAs={(bytes, opts) =>
+                handleSaveAs(fillFormFile, bytes, {
+                  suggestedName: `${baseName(fillFormFile.file.name)}-filled.pdf`,
+                  ...opts,
+                })
+              }
+              onRemoveFile={() => removeFile(fillFormFile.id)}
+              onOpenAnother={async () => {
+                const picked = await openAnotherPdf()
+                if (picked.length) addFiles(picked)
+              }}
+            />
+          ) : inSignAndFillMode ? (
+            <SignAndFillWorkspace
+              key={signAndFillFile.id}
+              file={signAndFillFile}
+              busy={busy}
+              onSaved={handleSignAndFillSave}
+              onSaveAs={(bytes, opts) =>
+                handleSaveAs(signAndFillFile, bytes, {
+                  suggestedName: `${baseName(signAndFillFile.file.name)}-signed.pdf`,
+                  ...opts,
+                })
+              }
+              onRemoveFile={() => removeFile(signAndFillFile.id)}
+              onOpenAnother={async () => {
+                const picked = await openAnotherPdf()
+                if (picked.length) addFiles(picked)
+              }}
+            />
+          ) : (
           <OperationPanel
             files={files}
             busy={busy}
@@ -485,17 +755,31 @@ export default function App() {
             onSignAndFill={handleSignAndFill}
             onInspectForm={handleInspectForm}
             onFillForm={handleFillForm}
+            onSelectOp={selectOp}
             message={message}
             error={error}
             lastResult={lastResult}
             onUseResultAsInput={useResultAsInput}
           />
+          )}
 
-          <InfoSections />
+          {/* Marketing / SEO content — hidden in focused workspaces so
+              the user isn't scrolling past it to reach Save buttons. */}
+          {!inFillFormMode && !inSignAndFillMode && <InfoSections />}
         </main>
       </div>
 
       <PrivacyFooter />
+
+      {/* Hidden fallback picker for "Open another" inside workspaces on
+          browsers without the File System Access API. */}
+      <input
+        ref={openAnotherInputRef}
+        type="file"
+        accept="application/pdf,.pdf"
+        multiple
+        className="hidden"
+      />
     </div>
   )
 }

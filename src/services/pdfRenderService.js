@@ -98,3 +98,40 @@ export async function renderPagesAsJpeg(data, opts = {}) {
   await pdf.destroy()
   return out
 }
+
+/**
+ * Render every page of a PDF to a PNG data URL — used by the Fill Form
+ * workspace, which needs full-resolution pages to overlay editable
+ * inputs on top of.
+ *
+ * @param {ArrayBuffer|Uint8Array} data
+ * @param {{ scale?: number }} [opts] scale default 1.25 (~90 DPI, fits comfortably in a workspace column)
+ * @returns {Promise<{ pageCount: number, pages: Array<{ dataUrl: string, width: number, height: number }> }>}
+ */
+export async function renderAllPages(data, opts = {}) {
+  const { scale = 1.25 } = opts
+  const bytes =
+    data instanceof Uint8Array ? data.slice() : new Uint8Array(data).slice()
+  const pdf = await pdfjsLib.getDocument({ data: bytes }).promise
+  const pageCount = pdf.numPages
+  const pages = []
+
+  for (let i = 1; i <= pageCount; i++) {
+    const page = await pdf.getPage(i)
+    const viewport = page.getViewport({ scale })
+    const canvas = document.createElement('canvas')
+    const context = canvas.getContext('2d')
+    canvas.width = Math.ceil(viewport.width)
+    canvas.height = Math.ceil(viewport.height)
+    await page.render({ canvasContext: context, viewport }).promise
+    pages.push({
+      dataUrl: canvas.toDataURL('image/png'),
+      width: canvas.width,
+      height: canvas.height,
+    })
+    page.cleanup()
+  }
+
+  await pdf.destroy()
+  return { pageCount, pages }
+}
