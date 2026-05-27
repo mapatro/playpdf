@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import FileUpload from './components/FileUpload.jsx'
 import PagePreview from './components/PagePreview.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
@@ -27,6 +27,7 @@ import {
   openPdfFiles,
   isFileSystemAccessSupported,
 } from './services/fileAccess.js'
+import { subscribeInstall, promptInstall } from './services/pwa.js'
 import {
   renderThumbnails,
   renderPagesAsJpeg,
@@ -50,6 +51,10 @@ export default function App() {
   const [error, setError] = useState('')
   const [activeOp, setActiveOp] = useState('merge')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // PWA install state: { canInstall, installed }. Lets the header
+  // surface an Install button only when the browser actually offers it.
+  const [pwa, setPwa] = useState({ canInstall: false, installed: false })
+  useEffect(() => subscribeInstall(setPwa), [])
   // Last PDF-output result, so the user can chain it into the next op
   // without re-downloading and re-uploading.
   //   { bytes, name, kind: 'replace' | 'add', targetFileId? }
@@ -612,19 +617,71 @@ export default function App() {
             >
               <span aria-hidden="true">📄</span> playPDF
             </a>
-            {/* Always-visible tagline so the value prop stays on screen
-                even when we hide the per-workspace heading to give the
-                PDF more room. */}
-            <span className="hidden border-l border-slate-200 pl-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400 sm:inline">
-              Free, private PDF editor · files never leave your device
+            {/* Value prop, always on screen so it stays visible even
+                when we hide the per-workspace heading. Three bold
+                pillars (free / private / offline) plus a softer
+                supporting clause — keeps the bar slim but reads. */}
+            <span className="hidden items-center gap-1.5 border-l border-orange-200 pl-3 text-xs sm:inline-flex dark:border-slate-700">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Free
+              </span>
+              <span className="text-orange-400 dark:text-orange-500" aria-hidden="true">
+                ·
+              </span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Private
+              </span>
+              <span className="text-orange-400 dark:text-orange-500" aria-hidden="true">
+                ·
+              </span>
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                Works offline
+              </span>
+              <span className="hidden text-slate-400 dark:text-slate-500 md:inline">
+                — files never leave your device
+              </span>
             </span>
           </div>
-          <a
-            href="https://patroventure.com"
-            className="text-sm font-medium text-slate-500 transition-colors hover:text-orange-600 dark:text-slate-400 dark:hover:text-orange-400"
-          >
-            A PatroVenture project ↗
-          </a>
+          <div className="flex items-center gap-2">
+            {pwa.canInstall && (
+              <button
+                type="button"
+                onClick={() => promptInstall()}
+                title="Install playPDF as an app on this device — works offline, opens in its own window"
+                className="inline-flex items-center gap-1.5 rounded-md border border-orange-300 bg-orange-50 px-2.5 py-1 text-xs font-semibold text-orange-700 transition-colors hover:bg-orange-100 dark:border-orange-700 dark:bg-orange-950/30 dark:text-orange-200 dark:hover:bg-orange-900/40"
+              >
+                <svg
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 4.5v12m0 0 4.5-4.5M12 16.5 7.5 12M4.5 19.5h15"
+                  />
+                </svg>
+                Install
+              </button>
+            )}
+            {pwa.installed && (
+              <span
+                title="playPDF is installed on this device."
+                className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-300"
+              >
+                ✓ Installed
+              </span>
+            )}
+            <a
+              href="https://patroventure.com"
+              className="hidden text-sm font-medium text-slate-500 transition-colors hover:text-orange-600 dark:text-slate-400 dark:hover:text-orange-400 md:inline"
+            >
+              A PatroVenture project ↗
+            </a>
+          </div>
         </nav>
       </header>
 
