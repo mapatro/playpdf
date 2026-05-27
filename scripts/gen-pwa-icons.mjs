@@ -37,7 +37,7 @@ async function emit(name, size, opts = {}) {
         width: size,
         height: size,
         channels: 4,
-        background: bg ?? { r: 15, g: 23, b: 42, alpha: 1 }, // slate-900
+        background: bg ?? { r: 234, g: 88, b: 12, alpha: 1 }, // orange-600 — matches the brand tile so the maskable safe-area doesn't show a contrasting frame
       },
     })
       .composite([
