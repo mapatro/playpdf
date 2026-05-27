@@ -11,7 +11,11 @@
 // This is a public, client-exposed token by design (not a secret).
 const CF_BEACON_TOKEN = '907fd415727248609669e4bd1a944511'
 
-const isDev = import.meta.env.DEV
+// Vite injects import.meta.env in browser/dev. In a Node test harness
+// there's no env, so default to "dev = true" (= no real beacon, just
+// console.debug). Optional chaining keeps `npm test` working when it
+// imports this module directly.
+const isDev = import.meta.env?.DEV ?? true
 const isPlaceholderToken = CF_BEACON_TOKEN === 'REPLACE_ME'
 
 /**
