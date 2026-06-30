@@ -161,7 +161,13 @@ export default function FillFormWorkspace({
         // re-inspect (no more fields) and re-render. For plain saves,
         // skip the load effect to avoid mid-edit remount.
         if (!doFlatten) skipNextLoadRef.current = true
-        await onSaved(file, bytes, { flatten: doFlatten })
+        const res = await onSaved(file, bytes, { flatten: doFlatten })
+        if (res?.cancelled) {
+          // User declined the same-file overwrite — keep edits intact.
+          skipNextLoadRef.current = false
+          setSaveState('dirty')
+          return
+        }
         setLastSavedAt(new Date())
         setSaveState('saved')
         if (doFlatten) {

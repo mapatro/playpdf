@@ -119,6 +119,11 @@ export async function renderAllPages(data, opts = {}) {
   for (let i = 1; i <= pageCount; i++) {
     const page = await pdf.getPage(i)
     const viewport = page.getViewport({ scale })
+    // The scale-1 viewport gives the page's DISPLAYED size in PDF points
+    // (rotation already applied), which is exactly the unit signAndFillPdf
+    // bakes text in. Carrying it lets the overlay size text to match the
+    // saved output (WYSIWYG) regardless of how big the page is shown.
+    const pointViewport = page.getViewport({ scale: 1 })
     const canvas = document.createElement('canvas')
     const context = canvas.getContext('2d')
     canvas.width = Math.ceil(viewport.width)
@@ -128,6 +133,8 @@ export async function renderAllPages(data, opts = {}) {
       dataUrl: canvas.toDataURL('image/png'),
       width: canvas.width,
       height: canvas.height,
+      pointWidth: pointViewport.width,
+      pointHeight: pointViewport.height,
     })
     page.cleanup()
   }

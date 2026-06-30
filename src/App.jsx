@@ -60,6 +60,11 @@ export default function App() {
   //   { bytes, name, kind: 'replace' | 'add', targetFileId? }
   const [lastResult, setLastResult] = useState(null)
 
+  // Files the user has agreed to overwrite in place this session, so the
+  // "save into the same file?" confirm (Sign & Fill / Fill Form / Redact)
+  // only appears once per file rather than on every save.
+  const overwriteOkRef = useRef(new Set())
+
   const addFiles = useCallback(async (incoming) => {
     // FileUpload always hands us [{ file, fileHandle? }]. Be lenient and
     // accept bare File objects too in case any other caller predates that.
@@ -126,7 +131,23 @@ export default function App() {
       const totalBytes = files.reduce((sum, f) => sum + f.file.size, 0)
 
       const mergedBytes = await mergePdfs(sources)
-      downloadBlob(mergedBytes, 'merged.pdf')
+
+      // Merge produces a brand-new document — never overwrite a source.
+      // Ask where to save it (Save As). On browsers without the picker,
+      // saveAsPdf downloads it; if the user cancels the picker we still
+      // expose the result below so they can save or chain it.
+      let savedInPlace = false
+      let cancelled = false
+      try {
+        const res = await saveAsPdf({
+          bytes: mergedBytes,
+          suggestedName: 'merged.pdf',
+        })
+        savedInPlace = Boolean(res?.savedInPlace)
+      } catch (err) {
+        if (err?.name === 'AbortError') cancelled = true
+        else throw err
+      }
 
       track('merge', {
         fileCount: files.length,
@@ -134,7 +155,11 @@ export default function App() {
       })
 
       setMessage(
-        `Merged ${files.length} files. Your download (merged.pdf) should start automatically.`,
+        cancelled
+          ? `Merged ${files.length} files — save was cancelled. Use the result below to save or keep editing.`
+          : savedInPlace
+            ? `Merged ${files.length} files and saved.`
+            : `Merged ${files.length} files. Your download (merged.pdf) should start automatically.`,
       )
       setLastResult({
         bytes: mergedBytes,
@@ -209,6 +234,87 @@ export default function App() {
     [],
   )
 
+  // "Save As" for either workspace / op: ask the user where to write a new
+  // file. On success, swap the workspace's file entry to the new handle
+  // so subsequent Saves go there (matching Word's behavior). On
+  // AbortError (user cancelled the picker) returns { cancelled: true }.
+  const handleSaveAs = useCallback(async (file, bytes, opts = {}) => {
+    const suggested =
+      opts.suggestedName || `${baseName(file.file.name)}-edited.pdf`
+    try {
+      const { fileHandle: newHandle } = await saveAsPdf({
+        bytes,
+        suggestedName: suggested,
+      })
+      // If the browser doesn't support showSaveFilePicker, saveAsPdf
+      // downloads and returns a null handle — leave the workspace's
+      // file entry alone in that case (handle and name stay as they
+      // were).
+      if (!newHandle) return { savedInPlace: false }
+      const newName =
+        typeof newHandle.name === 'string' && newHandle.name
+          ? newHandle.name
+          : suggested
+      const newFile = new File([bytes], newName, { type: 'application/pdf' })
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === file.id
+            ? {
+                ...f,
+                file: newFile,
+                fileHandle: newHandle,
+                buffer: bytes,
+              }
+            : f,
+        ),
+      )
+      return { savedInPlace: true }
+    } catch (err) {
+      if (err?.name === 'AbortError') return { savedInPlace: false, cancelled: true }
+      throw err
+    }
+  }, [])
+
+  // Save an op's output via the Save As picker and translate the result
+  // into the { savedInPlace, cancelled, suffix } shape the op handlers use
+  // for their status message. Used by Split (and the "save elsewhere"
+  // branch of the confirm-to-overwrite ops) so the source file is never
+  // silently overwritten.
+  const saveAsResult = useCallback(
+    async (file, bytes, name) => {
+      const res = await handleSaveAs(file, bytes, { suggestedName: name })
+      if (res?.cancelled) return { cancelled: true }
+      if (res?.savedInPlace) return { savedInPlace: true, suffix: 'Saved.' }
+      // Browser without showSaveFilePicker — handleSaveAs already
+      // downloaded the bytes as a new file.
+      return {
+        savedInPlace: false,
+        suffix: `Your download (${name}) should start automatically.`,
+      }
+    },
+    [handleSaveAs],
+  )
+
+  // Persist op output with the "save into the same file?" confirm flow
+  // used by Redact (and the same policy the Sign & Fill / Fill Form
+  // workspaces apply on Save). With a write handle we default to
+  // overwriting the source, asking once per file; declining — or having no
+  // handle at all — writes a new file instead.
+  const persistWithConfirm = useCallback(
+    async (file, bytes, name) => {
+      if (file.fileHandle && !overwriteOkRef.current.has(file.id)) {
+        const ok = window.confirm(
+          `Save into the same file?\n\n"${file.file.name}"\n\n` +
+            'OK — overwrite this file\nCancel — save as a new file instead',
+        )
+        if (!ok) return saveAsResult(file, bytes, name)
+        overwriteOkRef.current.add(file.id)
+      }
+      return saveOpResult(file, bytes, name)
+    },
+    [saveOpResult, saveAsResult],
+  )
+
   const useResultAsInput = useCallback(async () => {
     if (!lastResult) return
     setBusy(true)
@@ -270,13 +376,22 @@ export default function App() {
       runSingle(async () => {
         const bytes = await splitPdfRange(file.buffer ?? file.file, from, to)
         const name = `${baseName(file.file.name)}-pages-${from}-${to}.pdf`
-        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
+        // Splitting extracts a subset into a NEW document — overwriting the
+        // source would destroy the other pages. Always Save As.
+        const res = await saveAsResult(file, bytes, name)
+        if (res.cancelled) {
+          setMessage(
+            `Extracted pages ${from}–${to} — save was cancelled. Use the result below to save or keep editing.`,
+          )
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+          return
+        }
         track('split', { pageCount: file.pageCount, mode: 'range' })
-        setMessage(`Extracted pages ${from}–${to}. ${suffix}`)
-        if (!savedInPlace)
+        setMessage(`Extracted pages ${from}–${to}. ${res.suffix}`)
+        if (!res.savedInPlace)
           setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle, saveOpResult],
+    [runSingle, saveAsResult],
   )
 
   const handleSplitAll = useCallback(
@@ -372,20 +487,25 @@ export default function App() {
           options,
         )
         const name = `${baseName(file.file.name)}-filled.pdf`
-        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
+        const res = await persistWithConfirm(file, bytes, name)
         const filledCount = Object.keys(valuesByName).length
+        if (res.cancelled) {
+          setMessage(`Filled ${filledCount} field${filledCount === 1 ? '' : 's'} — save was cancelled.`)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+          return
+        }
         track('fillForm', {
           pageCount: file.pageCount,
           filledCount,
           flattened: Boolean(options?.flatten),
         })
         setMessage(
-          `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. ${suffix}`,
+          `Filled ${filledCount} field${filledCount === 1 ? '' : 's'}${options?.flatten ? ' (flattened)' : ''}. ${res.suffix}`,
         )
-        if (!savedInPlace)
+        if (!res.savedInPlace)
           setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle, saveOpResult],
+    [runSingle, persistWithConfirm],
   )
 
   const handleSignAndFill = useCallback(
@@ -396,22 +516,27 @@ export default function App() {
           placements,
         )
         const name = `${baseName(file.file.name)}-signed.pdf`
-        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
+        const res = await persistWithConfirm(file, bytes, name)
         const total = Object.values(placements).reduce(
           (s, items) => s + items.length,
           0,
         )
+        if (res.cancelled) {
+          setMessage(`Added ${total} item${total === 1 ? '' : 's'} — save was cancelled.`)
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+          return
+        }
         track('signAndFill', {
           pageCount: file.pageCount,
           placements: total,
         })
         setMessage(
-          `Added ${total} signature/text item${total === 1 ? '' : 's'}. ${suffix}`,
+          `Added ${total} signature/text item${total === 1 ? '' : 's'}. ${res.suffix}`,
         )
-        if (!savedInPlace)
+        if (!res.savedInPlace)
           setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle, saveOpResult],
+    [runSingle, persistWithConfirm],
   )
 
   const handleRedact = useCallback(
@@ -422,22 +547,31 @@ export default function App() {
           rectsByPage,
         )
         const name = `${baseName(file.file.name)}-redacted.pdf`
-        const { savedInPlace, suffix } = await saveOpResult(file, bytes, name)
         const totalRects = Object.values(rectsByPage).reduce(
           (s, r) => s + r.length,
           0,
         )
+        // Default to overwriting the source, but confirm first (once per
+        // file). Decline routes to Save As so the original is preserved.
+        const res = await persistWithConfirm(file, bytes, name)
+        if (res.cancelled) {
+          setMessage(
+            `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'} — save was cancelled.`,
+          )
+          setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
+          return
+        }
         track('redact', {
           pageCount: file.pageCount,
           rectCount: totalRects,
         })
         setMessage(
-          `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. ${suffix}`,
+          `Applied ${totalRects} redaction${totalRects === 1 ? '' : 's'}. ${res.suffix}`,
         )
-        if (!savedInPlace)
+        if (!res.savedInPlace)
           setLastResult({ bytes, name, kind: 'replace', targetFileId: file.id })
       }),
-    [runSingle, saveOpResult],
+    [runSingle, persistWithConfirm],
   )
 
   const handlePdfToJpg = useCallback(
@@ -463,6 +597,17 @@ export default function App() {
   // thumbnail refresh for speed (a stale tiny thumbnail is OK).
   const handleFillFormSave = useCallback(async (file, bytes, options) => {
     const name = `${baseName(file.file.name)}-filled.pdf`
+    // Default to overwriting the opened file, but confirm the first time
+    // for this file. Declining keeps the edits — the user can hit "Save
+    // As" to write a separate file instead.
+    if (file.fileHandle && !overwriteOkRef.current.has(file.id)) {
+      const ok = window.confirm(
+        `Save into the same file?\n\n"${file.file.name}"\n\n` +
+          'OK — overwrite this file\nCancel — keep editing (use “Save As” for a separate file)',
+      )
+      if (!ok) return { cancelled: true }
+      overwriteOkRef.current.add(file.id)
+    }
     await saveOrDownload({
       fileHandle: file.fileHandle,
       bytes,
@@ -490,6 +635,16 @@ export default function App() {
   // Same shape as handleFillFormSave but for Sign & Fill.
   const handleSignAndFillSave = useCallback(async (file, bytes) => {
     const name = `${baseName(file.file.name)}-signed.pdf`
+    // Same confirm-once-per-file policy as Fill Form. Decline keeps the
+    // placements so the user can choose "Save As" instead.
+    if (file.fileHandle && !overwriteOkRef.current.has(file.id)) {
+      const ok = window.confirm(
+        `Save into the same file?\n\n"${file.file.name}"\n\n` +
+          'OK — overwrite this file\nCancel — keep editing (use “Save As” for a separate file)',
+      )
+      if (!ok) return { cancelled: true }
+      overwriteOkRef.current.add(file.id)
+    }
     await saveOrDownload({
       fileHandle: file.fileHandle,
       bytes,
@@ -542,47 +697,6 @@ export default function App() {
       input.addEventListener('change', handler)
       input.click()
     })
-  }, [])
-
-  // "Save As" for either workspace: ask the user where to write a new
-  // file. On success, swap the workspace's file entry to the new handle
-  // so subsequent Saves go there (matching Word's behavior). On
-  // AbortError (user cancelled the picker) do nothing.
-  const handleSaveAs = useCallback(async (file, bytes, opts = {}) => {
-    const suggested =
-      opts.suggestedName || `${baseName(file.file.name)}-edited.pdf`
-    try {
-      const { fileHandle: newHandle } = await saveAsPdf({
-        bytes,
-        suggestedName: suggested,
-      })
-      // If the browser doesn't support showSaveFilePicker, saveAsPdf
-      // downloads and returns a null handle — leave the workspace's
-      // file entry alone in that case (handle and name stay as they
-      // were).
-      if (!newHandle) return { savedInPlace: false }
-      const newName =
-        typeof newHandle.name === 'string' && newHandle.name
-          ? newHandle.name
-          : suggested
-      const newFile = new File([bytes], newName, { type: 'application/pdf' })
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.id === file.id
-            ? {
-                ...f,
-                file: newFile,
-                fileHandle: newHandle,
-                buffer: bytes,
-              }
-            : f,
-        ),
-      )
-      return { savedInPlace: true }
-    } catch (err) {
-      if (err?.name === 'AbortError') return { savedInPlace: false, cancelled: true }
-      throw err
-    }
   }, [])
 
   // Pick the file each workspace operates on. Multi-file workflows go

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { renderAllPages } from '../services/pdfRenderService.js'
 import { signAndFillPdf } from '../services/pdfService.js'
 import SignatureCanvas from './SignatureCanvas.jsx'
@@ -127,7 +134,14 @@ export default function SignAndFillWorkspace({
       // App's setFiles is about to cause — otherwise it'd remount
       // the workspace mid-edit.
       skipNextLoadRef.current = true
-      await onSaved(file, bytes)
+      const res = await onSaved(file, bytes)
+      if (res?.cancelled) {
+        // User declined the same-file overwrite — keep their edits and
+        // don't swallow a reload (nothing changed on disk).
+        skipNextLoadRef.current = false
+        setSaveState('dirty')
+        return
+      }
       setLastSavedAt(new Date())
       setSaveState('saved')
     } catch (err) {
@@ -559,6 +573,25 @@ function SignAndFillPage({
 }) {
   const boxRef = useRef(null)
 
+  // pxPerPoint = how many CSS pixels one PDF point occupies at the page's
+  // current displayed size. signAndFillPdf bakes text in points, so the
+  // overlay must render at `fontSizePt * pxPerPoint` to match the saved
+  // output exactly. Without this the page is shown far larger than its
+  // point dimensions and text looks much smaller on screen than it bakes.
+  const [pxPerPoint, setPxPerPoint] = useState(1)
+  useLayoutEffect(() => {
+    const box = boxRef.current
+    if (!box || !page.pointWidth) return
+    const measure = () => {
+      const w = box.clientWidth
+      if (w) setPxPerPoint(w / page.pointWidth)
+    }
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(box)
+    return () => ro.disconnect()
+  }, [page.pointWidth])
+
   const onPageClick = (e) => {
     if (!canPlace) return
     // Ignore clicks that originated on a placement.
@@ -594,6 +627,7 @@ function SignAndFillPage({
             key={p.id}
             placement={p}
             boxRef={boxRef}
+            pxPerPoint={pxPerPoint}
             shouldFocus={p.id === pendingFocusId}
             onFocused={onClearPendingFocus}
             onUpdate={(patch, opts) => onUpdate(p.id, patch, opts)}
@@ -615,6 +649,7 @@ function SignAndFillPage({
 function Placement({
   placement,
   boxRef,
+  pxPerPoint = 1,
   shouldFocus,
   onFocused,
   onUpdate,
@@ -724,9 +759,9 @@ function Placement({
           </button>
           <span
             className="flex h-4 min-w-[2.25rem] items-center justify-center rounded-t border border-b-0 border-orange-500/70 bg-orange-50 px-1 text-[9px] leading-none text-orange-700 dark:bg-orange-900/30 dark:text-orange-200"
-            title="Font size (px)"
+            title="Font size (points)"
           >
-            {currentFont}px
+            {currentFont}pt
           </span>
           <button
             type="button"
@@ -756,7 +791,9 @@ function Placement({
           }}
           className="block border border-orange-500/70 bg-yellow-50/95 text-slate-900 outline-none focus:bg-yellow-100"
           style={{
-            fontSize: `${currentFont}px`,
+            // currentFont is in PDF points; render it at the page's
+            // displayed scale so the on-screen size matches the saved file.
+            fontSize: `${currentFont * pxPerPoint}px`,
             minWidth: '8ch',
             padding: 0,
           }}
